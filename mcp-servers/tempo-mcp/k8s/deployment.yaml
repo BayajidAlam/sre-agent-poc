@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo-mcp
+  namespace: agent-read
+  labels:
+    app: tempo-mcp
+    sre-poc/component: mcp-shim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo-mcp
+  template:
+    metadata:
+      labels:
+        app: tempo-mcp
+    spec:
+      containers:
+        - name: tempo-mcp
+          image: tempo-mcp:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TEMPO_URL
+              value: "http://tempo.observability.svc.cluster.local:3200"
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5

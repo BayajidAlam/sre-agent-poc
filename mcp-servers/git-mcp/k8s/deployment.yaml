@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git-mcp
+  namespace: agent-read
+  labels:
+    app: git-mcp
+    sre-poc/component: mcp-shim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: git-mcp
+  template:
+    metadata:
+      labels:
+        app: git-mcp
+    spec:
+      containers:
+        - name: git-mcp
+          image: git-mcp:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5

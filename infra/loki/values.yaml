@@ -1,0 +1,58 @@
+# Loki single-binary mode — no external object store, fits in the kind cluster.
+deploymentMode: SingleBinary
+
+singleBinary:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+# Zero out other deployment mode targets (validation requires it for filesystem).
+backend:  { replicas: 0 }
+read:     { replicas: 0 }
+write:    { replicas: 0 }
+ingester: { replicas: 0 }
+querier:  { replicas: 0 }
+distributor:    { replicas: 0 }
+queryFrontend:  { replicas: 0 }
+queryScheduler: { replicas: 0 }
+indexGateway:  { replicas: 0 }
+compactor:      { replicas: 0 }
+ruler:          { replicas: 0 }
+
+loki:
+  auth_enabled: false
+  storage:
+    type: filesystem
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  limits_config:
+    retention_period: 24h
+    ingestion_rate_mb: 10
+    ingestion_burst_size_mb: 20
+
+# Promtail scrapes logs from app pods and pushes to Loki.
+promtail:
+  enabled: true
+  config:
+    snippets:
+      pipelineStages:
+        - docker: {}
+
+# POC: disable optional memcached caches to fit in kind worker memory.
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false

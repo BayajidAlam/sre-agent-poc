@@ -1,0 +1,24 @@
+{
+  "name": "demo-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-service demo for SRE POC. /api/checkout fans out to /api/payment and /api/inventory.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node -r ./src/otel.js src/server.js",
+    "start:no-otel": "node src/server.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.52.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.54.0",
+    "@opentelemetry/resources": "^1.27.0",
+    "@opentelemetry/sdk-node": "^0.54.0",
+    "@opentelemetry/sdk-trace-base": "^1.27.0",
+    "@opentelemetry/semantic-conventions": "^1.27.0",
+    "express": "^4.21.0",
+    "pg": "^8.13.0",
+    "redis": "^4.7.0"
+  }
+}

@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: policy-mcp-shim
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "Policy MCP shim — wraps the existing policy-mcp (OPA gate)"
+  protocol: STREAMABLE_HTTP
+  url: http://policy-mcp-shim.agent-read.svc.cluster.local:80/mcp
+  timeout: 5s

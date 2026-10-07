@@ -1,0 +1,40 @@
+# OpenTelemetry Collector — receives OTLP from apps and exports to Tempo/Prometheus/Loki.
+mode: deployment
+image:
+  repository: otel/opentelemetry-collector-contrib
+  # Chart's appVersion is 0.161.0; pin a slightly older but matching contrib tag.
+  tag: 0.161.0
+
+# Disable the chart's built-in presets that auto-inject receivers + rename exporters.
+presets:
+  logsCollection:
+    enabled: false
+
+config:
+  exporters:
+    otlp:
+      endpoint: tempo.observability:4317
+      tls: { insecure: true }
+  processors:
+    batch:
+      timeout: 5s
+    memory_limiter:
+      limit_mib: 512
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: 0.0.0.0:4317 }
+        http: { endpoint: 0.0.0.0:4318 }
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlp]
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits:   { cpu: 500m, memory: 512Mi }
+
+service:
+  type: ClusterIP

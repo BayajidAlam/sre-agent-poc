@@ -1,0 +1,12 @@
+[
+  {
+    "metadata": {"name": "demo-service", "namespace": "apps-demo"},
+    "spec": {"source": {"repoURL": "https://github.com/example/demo-service", "path": "apps/demo-service"}, "destination": {"server": "https://kubernetes.default.svc"}},
+    "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}, "revisions": ["v2-deployed-2026-10-05"]}
+  },
+  {
+    "metadata": {"name": "payment-service", "namespace": "apps-demo"},
+    "spec": {"source": {"repoURL": "https://github.com/example/payment", "path": "apps/payment"}, "destination": {"server": "https://kubernetes.default.svc"}},
+    "status": {"sync": {"status": "OutOfSync"}, "health": {"status": "Degraded"}, "revisions": ["v2-deployed-2026-10-05T16:50:00Z", "v1-deployed-2026-10-05T17:05:00Z"]}
+  }
+]

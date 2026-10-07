@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki-mcp
+  namespace: agent-read
+  labels:
+    app: loki-mcp
+    sre-poc/component: mcp-shim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki-mcp
+  template:
+    metadata:
+      labels:
+        app: loki-mcp
+    spec:
+      containers:
+        - name: loki-mcp
+          image: loki-mcp:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LOKI_URL
+              value: "http://loki.observability.svc.cluster.local:3100"
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5

@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: alertmanager-mcp
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "Alertmanager MCP — active alert + silence queries"
+  protocol: STREAMABLE_HTTP
+  url: http://alertmanager-mcp.agent-read.svc.cluster.local:80/mcp
+  timeout: 10s

@@ -1,0 +1,25 @@
+# Tempo in single-binary mode with local filesystem storage.
+tempo:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {}
+        http: {}
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      pool:
+        max_workers: 100
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  service:
+    type: NodePort
+    nodePort: 32002
+
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClass: standard

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "sre-agent — Multi-Agent Incident Response on kagent",
+    "output": "sre-agent.architecture.html",
+    "visual_preset": "signal-flow",
+    "animation": "trace",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "prom",   "type": "external",   "label": "Prometheus",       "sublabel": "metrics + alerts",     "pos": [40,  120], "size": [140, 60], "tag": "observability" },
+    { "id": "alert",  "type": "external",   "label": "Alertmanager",     "sublabel": "webhook receiver",     "pos": [40,  300], "size": [140, 60], "tag": "observability" },
+    { "id": "loki",   "type": "database",   "label": "Loki",             "sublabel": "log store",            "pos": [40,  480], "size": [140, 60], "tag": "observability" },
+    { "id": "tempo",  "type": "database",   "label": "Tempo",            "sublabel": "trace store",          "pos": [40,  650], "size": [140, 60], "tag": "observability" },
+
+    { "id": "ctrl",   "type": "backend",    "label": "kagent Controller","sublabel": "A2A + Agent CRs",      "pos": [260, 210], "size": [160, 80], "tag": "kagent 0.7.2" },
+    { "id": "trace",  "type": "backend",    "label": "trace-agent",      "sublabel": "read-only",            "pos": [490,  80], "size": [150, 70], "tag": "ns: agent-read" },
+    { "id": "rca",    "type": "backend",    "label": "rca-agent",        "sublabel": "reasoner",             "pos": [770,  80], "size": [150, 70], "tag": "ns: agent-read" },
+    { "id": "rem",    "type": "backend",    "label": "remediator-agent", "sublabel": "scoped RW",            "pos": [1050,  80], "size": [160, 70], "tag": "ns: agent-read" },
+
+    { "id": "opa",    "type": "security",   "label": "OPA",              "sublabel": "policy gate",          "pos": [490, 280], "size": [150, 70], "tag": "policy/sre.rego" },
+    { "id": "pmcp",   "type": "backend",    "label": "policy-mcp",       "sublabel": "HTTP /evaluate",       "pos": [770, 280], "size": [150, 70], "tag": "Node wrapper" },
+
+    { "id": "demo",   "type": "backend",    "label": "demo-service",     "sublabel": "Node + Express",       "pos": [490, 470], "size": [150, 70], "tag": "ns: apps-demo" },
+    { "id": "pay",    "type": "backend",    "label": "/api/payment",     "sublabel": "checkout v2",          "pos": [770, 430], "size": [150, 60], "tag": "v2 (broken)" },
+    { "id": "inv",    "type": "backend",    "label": "/api/inventory",   "sublabel": "checkout dep",         "pos": [770, 530], "size": [150, 60], "tag": "stable" },
+
+    { "id": "dash",   "type": "cloud",      "label": "Grafana",          "sublabel": "Explore :3000",        "pos": [260, 650], "size": [160, 60], "tag": "observability" },
+    { "id": "k8sd",   "type": "cloud",      "label": "K8s Dashboard",    "sublabel": "admin UI :19443",      "pos": [1270, 280], "size": [170, 60], "tag": "admin-user" },
+
+    { "id": "kubemcp","type": "messagebus", "label": "kubectl MCP",      "sublabel": "RemoteMCPServer",      "pos": [1270,  80], "size": [170, 60], "tag": "manifests/mcp" },
+    { "id": "slack",  "type": "messagebus", "label": "Slack Webhook",    "sublabel": "notifier",             "pos": [1270, 470], "size": [170, 60], "tag": "optional" }
+  ],
+  "boundaries": [
+    { "kind": "region",          "label": "kind cluster (sre-poc)", "wraps": ["ctrl", "trace", "rca", "rem", "opa", "pmcp", "demo", "pay", "inv"], "pad": 18 },
+    { "kind": "security-group",  "label": "observability ns",       "wraps": ["prom", "alert", "loki", "tempo", "dash"], "pad": 14 },
+    { "kind": "security-group",  "label": "apps-demo ns",           "wraps": ["demo", "pay", "inv"], "pad": 14 },
+    { "kind": "security-group",  "label": "agent-read ns",          "wraps": ["trace", "rca", "rem"], "pad": 14 }
+  ],
+  "connections": [
+    { "from": "prom",   "to": "alert",  "label": "firing rules", "variant": "emphasis" },
+    { "from": "alert",  "to": "ctrl",   "label": "POST webhook", "variant": "emphasis" },
+    { "from": "ctrl",   "to": "trace",  "label": "A2A dispatch", "variant": "emphasis" },
+    { "from": "trace",  "to": "rca",    "label": "incident-context", "variant": "emphasis" },
+    { "from": "rca",    "to": "rem",    "label": "rca-finding", "variant": "emphasis" },
+    { "from": "rem",    "to": "pmcp",   "label": "POST /evaluate", "variant": "security" },
+    { "from": "pmcp",   "to": "opa",    "label": "rego eval", "variant": "security" },
+    { "from": "pmcp",   "to": "rem",    "label": "allow / deny", "variant": "dashed" },
+    { "from": "rem",    "to": "kubemcp","label": "kubectl apply/undo", "variant": "emphasis" },
+    { "from": "rem",    "to": "slack",  "label": "notify", "variant": "dashed" },
+    { "from": "trace",  "to": "tempo",  "label": "trace query", "variant": "dashed" },
+    { "from": "trace",  "to": "loki",   "label": "log query", "variant": "dashed" },
+    { "from": "demo",   "to": "pay",    "label": "/api/checkout", "variant": "emphasis" },
+    { "from": "pay",    "to": "inv",    "label": "calls", "variant": "dashed" },
+    { "from": "prom",   "to": "dash",   "label": "datasource" },
+    { "from": "loki",   "to": "dash",   "label": "datasource" },
+    { "from": "tempo",  "to": "dash",   "label": "datasource" }
+  ],
+  "cards": [
+    { "dot": "cyan",    "title": "Signal Ingestion",        "items": ["Prometheus watches demo-service and emits burn-rate alerts", "Alertmanager POSTs a JSON envelope to the kagent controller webhook", "Loki + Tempo stay RO — agents query them via the MCP layer"] },
+    { "dot": "emerald", "title": "3-Agent A2A Pipeline",    "items": ["trace-agent (RO) pulls the incident context verbatim", "rca-agent reasons and emits a typed finding", "remediator-agent proposes actions; every write is policy-gated"] },
+    { "dot": "rose",    "title": "Defense in Depth",        "items": ["OPA Rego allow-list + confidence ≥ 0.7 + risk ≠ high", "policy-mcp returns default-deny on any error", "agent-read SA is view-only; writes scoped via agent-read role bindings"] }
+  ]
+}

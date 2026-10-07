@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-sre-poc
+  namespace: observability
+  labels: { grafana_dashboard: "true" }
+data:
+  sre-poc-overview.json: |
+    {
+      "title": "SRE POC Overview",
+      "uid": "sre-poc-overview",
+      "schemaVersion": 39,
+      "panels": [
+        {
+          "title": "Latency p95 (checkout)",
+          "type": "timeseries",
+          "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_seconds_bucket{service=\"checkout\"}[5m])) by (le))", "datasource": { "type": "prometheus", "uid": "prometheus" } }],
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+        },
+        {
+          "title": "Error rate (5xx)",
+          "type": "timeseries",
+          "targets": [{ "expr": "sum(rate(http_requests_total{code=~\"5..\"}[5m])) by (service)", "datasource": { "type": "prometheus", "uid": "prometheus" } }],
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+        },
+        {
+          "title": "Request volume",
+          "type": "timeseries",
+          "targets": [{ "expr": "sum(rate(http_requests_total[5m])) by (service)", "datasource": { "type": "prometheus", "uid": "prometheus" } }],
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+        },
+        {
+          "title": "Recent log errors",
+          "type": "logs",
+          "targets": [{ "expr": "{level=\"error\"}", "datasource": { "type": "loki", "uid": "loki" } }],
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+        }
+      ]
+    }

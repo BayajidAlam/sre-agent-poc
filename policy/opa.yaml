@@ -1,0 +1,78 @@
+# OPA sidecar for policy-mcp. Exposes the REST API on 8181.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: agent-write
+  labels: { app: opa }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: opa }
+  template:
+    metadata:
+      labels: { app: opa }
+    spec:
+      containers:
+        - name: opa
+          image: openpolicyagent/opa:0.65.0
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:8181"
+            - "--log-level=info"
+            - "/policy/sre.rego"
+          ports:
+            - { containerPort: 8181 }
+          volumeMounts:
+            - name: policy
+              mountPath: /policy
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8181
+            initialDelaySeconds: 2
+      volumes:
+        - name: policy
+          configMap:
+            name: opa-policy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policy
+  namespace: agent-write
+data:
+  sre.rego: |
+    package sre.remediation
+
+    default allow = false
+
+    allowed_namespaces := {"apps-demo", "agent-write"}
+
+    cluster_scoped_delete(a) {
+        a.tool == "kubectl"
+        a.op == "delete"
+        a.target_namespace == "ok"
+    }
+
+    namespace_allowed(ns) {
+        allowed_namespaces[ns]
+    }
+
+    allow {
+        input.confidence >= 0.7
+        input.risk != "high"
+        not cluster_scoped_delete(input)
+        namespace_allowed(input.target_namespace)
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: agent-write
+spec:
+  selector: { app: opa }
+  ports:
+    - { port: 8181, targetPort: 8181 }

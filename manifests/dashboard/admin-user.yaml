@@ -1,0 +1,43 @@
+# Admin user for Kubernetes Dashboard login.
+# The dashboard already has cluster-admin binding via its own ServiceAccount
+# (recommended.yaml). This admin-user is provided as a convenient alternative
+# for browser login.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kubernetes-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kubernetes-dashboard
+---
+# NodePort service exposing Dashboard on a free high host port.
+# Maps to host:19443 -> container:30020 -> service:443 -> pod:8443.
+# 19443 is in the same high-port range as our other UIs and unlikely to be
+# squatted by wslrelay on 127.0.0.1 — but use the host external IP, not localhost.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubernetes-dashboard-np
+  namespace: kubernetes-dashboard
+  labels:
+    app.kubernetes.io/component: ui-nodeport
+spec:
+  type: NodePort
+  selector:
+    k8s-app: kubernetes-dashboard
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8443
+      nodePort: 30020

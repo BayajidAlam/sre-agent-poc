@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: slack-mcp
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "Slack MCP — posts notifications to in-cluster slack-recorder"
+  protocol: STREAMABLE_HTTP
+  url: http://slack-mcp.agent-read.svc.cluster.local:80/mcp
+  timeout: 5s

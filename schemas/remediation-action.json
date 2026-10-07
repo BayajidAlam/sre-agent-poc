@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sre-poc.local/schemas/remediation-action.json",
+  "title": "RemediationAction",
+  "description": "Input to remediator-agent. Must pass policy-mcp.evaluate() before any cluster write.",
+  "type": "object",
+  "required": [
+    "action_id",
+    "incident_id",
+    "tool",
+    "op",
+    "target_namespace",
+    "requested_by",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "type": "string",
+      "description": "UUID or ULID."
+    },
+    "incident_id": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string",
+      "enum": ["kubectl", "argocd", "helm", "git", "slack"]
+    },
+    "op": {
+      "type": "string",
+      "description": "Operation name. Disallowed: 'delete' on cluster-scoped resources."
+    },
+    "target_namespace": {
+      "type": "string",
+      "description": "Must be in the allow-list (default: apps-demo)."
+    },
+    "target_resource": {
+      "type": "string",
+      "description": "Kind/name, e.g., deployment/payment."
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "requested_by": {
+      "type": "string",
+      "description": "Agent identity, e.g., 'rca-agent@v1'."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_decision": {
+      "type": "object",
+      "description": "Populated by policy-mcp.evaluate().",
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "decided_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

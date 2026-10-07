@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: prometheus-mcp
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "Prometheus MCP — PromQL queries against kube-prometheus-stack"
+  protocol: STREAMABLE_HTTP
+  url: http://prometheus-mcp.agent-read.svc.cluster.local:80/mcp
+  timeout: 10s

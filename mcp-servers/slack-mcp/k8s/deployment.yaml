@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slack-mcp
+  namespace: agent-read
+  labels:
+    app: slack-mcp
+    sre-poc/component: mcp-shim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slack-mcp
+  template:
+    metadata:
+      labels:
+        app: slack-mcp
+    spec:
+      containers:
+        - name: slack-mcp
+          image: slack-mcp:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SLACK_URL
+              value: "http://slack-recorder.agent-read.svc.cluster.local:80/chat.postMessage"
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5

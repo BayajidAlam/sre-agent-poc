@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: argocd-mcp
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "ArgoCD MCP (stubbed) — fixture app list for cross-referencing deploy state"
+  protocol: STREAMABLE_HTTP
+  url: http://argocd-mcp.agent-read.svc.cluster.local:80/mcp
+  timeout: 5s

@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: git-mcp
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "Git MCP — fixture repo with recent commits + runbooks"
+  protocol: STREAMABLE_HTTP
+  url: http://git-mcp.agent-read.svc.cluster.local:80/mcp
+  timeout: 5s

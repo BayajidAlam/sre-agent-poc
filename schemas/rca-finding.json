@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sre-poc.local/schemas/rca-finding.json",
+  "title": "RCAFinding",
+  "description": "Output of rca-agent. Cross-references IncidentContext with deploy history and runbooks.",
+  "type": "object",
+  "required": [
+    "incident_id",
+    "probable_cause",
+    "evidence",
+    "risk",
+    "confidence",
+    "proposed_action"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "type": "string",
+      "description": "Echoed from IncidentContext."
+    },
+    "probable_cause": {
+      "type": "string",
+      "description": "Short human-readable root cause statement.",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "array",
+      "description": "Citations by source + ID. Thin evidence must drop confidence.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["source", "ref"],
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": ["tempo", "loki", "prometheus", "argocd", "git", "runbook"]
+          },
+          "ref": {
+            "type": "string",
+            "description": "Trace ID, log line, metric name, deploy ID, or runbook path."
+          },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "risk": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "If evidence is thin, must be <= 0.4 and risk = high."
+    },
+    "proposed_action": {
+      "type": "object",
+      "description": "Pre-form of RemediationAction (without id/timestamp).",
+      "required": ["tool", "op"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "string",
+          "enum": ["kubectl", "argocd", "helm", "git", "slack"]
+        },
+        "op": {
+          "type": "string",
+          "description": "Operation: rollout.undo, scale, patch, rollback, etc."
+        },
+        "target_namespace": { "type": "string" },
+        "target_resource": { "type": "string" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

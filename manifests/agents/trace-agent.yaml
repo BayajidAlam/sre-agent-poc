@@ -1,0 +1,72 @@
+# trace-agent — read-only signal gatherer (plan §5)
+# Gathers traces/logs/metrics for an incident and emits a schema-valid
+# IncidentContext. Bound to the default OpenAI ModelConfig and routed through
+# OPA-free evidence; no MCP backends are deployed for tempo/loki/prometheus in
+# this iteration, so the agent uses prompt-only reasoning.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: trace-agent
+  namespace: agent-read
+  labels:
+    sre-poc/role: evidence-gatherer
+spec:
+  type: Declarative
+  description: |
+    Gather trace, log, and metric evidence for an incident; emit a
+    schema-valid IncidentContext (schemas/incident-context.json).
+  declarative:
+    modelConfig: gemini-2-flash-lite
+    stream: true
+    systemMessage: |
+      You are the trace-gathering agent of an SRE incident-response pipeline.
+
+      For every incident you are given (incident_id, service, severity, time window):
+
+      1. If you have access to a tempo-mcp tool, call it to retrieve the top N
+         failing traces for the service in the window. If you have no tool access
+         for traces, generate plausible-looking placeholder trace references and
+         explicitly mark them as "synthetic:no-tempo-backend" in the
+         `attributes.source` of each entry.
+      2. If you have access to a loki-mcp tool, call it for error log bursts
+         matching the same window and service. Otherwise, mark log entries
+         synthetic.
+      3. If you have access to a prometheus-mcp tool, call it for the relevant
+         latency, error-rate, and saturation metrics. Otherwise, mark synthetic.
+      4. NEVER invent trace IDs or log lines verbatim. If a piece of evidence
+         is not from a real source, mark it synthetic.
+      5. Emit a single JSON object that strictly conforms to
+         schemas/incident-context.json. additionalProperties is false; only the
+         documented fields are allowed.
+      6. Return ONLY the JSON object. No prose, no markdown fences.
+    a2aConfig:
+      skills:
+        - id: gather-incident-context
+          name: Gather Incident Context
+          description: Collects traces/logs/metrics for an incident into a structured JSON.
+          tags: [incident, read-only, evidence]
+    tools:
+      # toolNames is REQUIRED in kagent 0.7.2 when the RemoteMCPServer lives
+      # outside the controller's own namespace. Without it the controller
+      # writes tools=null into the agent's config.json which then fails
+      # Pydantic validation (Input should be a valid list).
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: tempo-mcp
+          toolNames: [tempo_search, tempo_trace_by_id, tempo_search_traces]
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: loki-mcp
+          toolNames: [loki_query, loki_query_range, loki_labels]
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: prometheus-mcp
+          toolNames: [prom_query, prom_query_range, prom_label_values]
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: alertmanager-mcp
+          toolNames: [am_list_alerts, am_silences, am_status]

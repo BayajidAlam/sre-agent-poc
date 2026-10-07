@@ -1,0 +1,13 @@
+# Custom kagent chart values — force Gemini as default and clear the
+# openAI block so the chart-installed ModelConfig CR doesn't fail the
+# "openAI must be nil if provider != OpenAI" validation.
+#
+# Used by: scripts/install-kagent-controller.sh
+providers:
+  default: gemini
+  openAI: null
+  gemini:
+    provider: Gemini
+    model: gemini-3.5-flash-lite
+    apiKeySecretRef: kagent-gemini
+    apiKeySecretKey: GOOGLE_API_KEY

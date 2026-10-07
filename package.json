@@ -1,0 +1,15 @@
+{
+  "name": "sre-agent-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-Agent SRE on Kubernetes (kagent) — POC",
+  "scripts": {
+    "test": "node tests/schemas/validate.test.js && node tests/schemas/opa-sync.test.js && node policy/policy-sim.js && node tests/schemas/yaml-test.js"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  },
+  "dependencies": {
+    "ajv-formats": "^3.0.1"
+  }
+}

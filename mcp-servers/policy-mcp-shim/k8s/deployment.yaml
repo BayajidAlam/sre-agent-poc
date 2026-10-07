@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: policy-mcp-shim
+  namespace: agent-read
+  labels:
+    app: policy-mcp-shim
+    sre-poc/component: mcp-shim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: policy-mcp-shim
+  template:
+    metadata:
+      labels:
+        app: policy-mcp-shim
+    spec:
+      containers:
+        - name: policy-mcp-shim
+          image: policy-mcp-shim:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: POLICY_URL
+              value: "http://policy-mcp.agent-write.svc.cluster.local:80/tools/policy_evaluate"
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5

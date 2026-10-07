@@ -1,0 +1,19 @@
+# kagent-tools RemoteMCPServer — alias of the chart-installed builtin
+# kubectl/get/apply/exec MCP server. Lives in `kagent` namespace too, but
+# kagent 0.7.2's controller cannot resolve cross-namespace RemoteMCPServer
+# refs from Agent CRs (it logs "RemoteMCPServer.kagent.dev 'kagent-tools'
+# not found"). Workaround: re-declare a same-name alias in agent-read that
+# points to the real kagent-tools service in the kagent namespace.
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: kagent-tools
+  namespace: agent-read
+  labels:
+    sre-poc/component: builtin-kagent-tools
+spec:
+  description: Built-in kagent MCP for kubectl/get/apply/exec against the cluster.
+  protocol: STREAMABLE_HTTP
+  url: http://kagent-tools.kagent.svc.cluster.local:8084/mcp
+  timeout: 30s
+  terminateOnClose: true

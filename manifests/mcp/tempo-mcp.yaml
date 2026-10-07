@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: tempo-mcp
+  namespace: agent-read
+  labels:
+    sre-poc/component: mcp-shim
+spec:
+  description: "Tempo MCP — trace search + retrieval against the Tempo stack"
+  protocol: STREAMABLE_HTTP
+  url: http://tempo-mcp.agent-read.svc.cluster.local:80/mcp
+  timeout: 10s

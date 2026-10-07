@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-mcp
+  namespace: agent-read
+  labels:
+    app: alertmanager-mcp
+    sre-poc/component: mcp-shim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager-mcp
+  template:
+    metadata:
+      labels:
+        app: alertmanager-mcp
+    spec:
+      containers:
+        - name: alertmanager-mcp
+          image: alertmanager-mcp:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: AM_URL
+              value: "http://kube-prom-kube-prometheus-alertmanager.observability.svc.cluster.local:9093"
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 5

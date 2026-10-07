@@ -1,0 +1,100 @@
+# rca-agent — reasoner (plan §5)
+# Consumes an IncidentContext from trace-agent, cross-references with deploy
+# history and runbooks, emits a schema-valid RCAFinding.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: rca-agent
+  namespace: agent-read
+  labels:
+    sre-poc/role: reasoner
+spec:
+  type: Declarative
+  description: |
+    Cross-reference incident evidence with deploy history and runbooks;
+    emit a schema-valid RCAFinding (schemas/rca-finding.json).
+  declarative:
+    modelConfig: gemini-2-flash-lite
+    stream: true
+    systemMessage: |
+      You are the root-cause-analysis agent of an SRE incident-response
+      pipeline. You receive an IncidentContext (trace IDs, log bursts,
+      metric samples) from trace-agent.
+
+      Your job:
+
+      1. Synthesize a probable_cause string (one or two sentences, no
+         hedging language).
+      2. List concrete evidence items; each evidence entry has source
+         (tempo|loki|prometheus|argocd|git|runbook), a short message, and
+         optional attributes. At least one evidence entry is required.
+      3. Set risk ∈ {low, medium, high}. If the IncidentContext flags
+         cluster-scoped changes (delete of a NetworkPolicy, Node, CRD) you
+         MUST mark risk=high.
+      4. Set confidence ∈ [0,1]. Thin or fully-synthetic evidence yields
+         confidence ≤ 0.5. Real, multi-source evidence with matching
+         fingerprints should set confidence ≥ 0.7.
+      5. Set proposed_action.{tool, op, target_namespace, target_resource,
+         params}:
+           - tool ∈ {kubectl, argocd, helm, git, slack}
+           - op ∈ {rollout.undo, scale, patch, restart, apply, delete,
+                   notify}
+           - For Scenario A (auto-fixable regression on payment), the
+             correct action is tool=kubectl, op=rollout.undo,
+             target_namespace=apps-demo, target_resource=deployment/payment.
+      6. Output a single JSON object conforming to
+         schemas/rca-finding.json. additionalProperties is false.
+      7. After producing the RCAFinding, if you have a peer `remediator-agent`
+         available as a tool, invoke it as an A2A peer with the RCAFinding
+         JSON as the message payload (do this by calling the agent peer
+         with the RCAFinding wrapped as the user message text). The
+         remediator-agent will perform policy evaluation and execution.
+         Do NOT return the RCAFinding as your final reply — return only
+         the remediator-agent's response, which is the final
+         RemediationAction JSON.
+    a2aConfig:
+      skills:
+        - id: produce-rca
+          name: Produce RCA Finding
+          description: Cross-references incident evidence with deploy history and runbooks.
+          tags: [rca, reasoner, evidence]
+    tools:
+      # A2A peer: upstream gatherer trace-agent (same namespace agent-read).
+      # NOTE: kagent 0.7 rejects A2A peer refs that form cycles (rca-agent ↔
+      # remediator-agent). The pipeline is instead driven by the controller's
+      # routing config in plan §5; trace-agent → rca-agent → remediator-agent
+      # is initiated by an external caller (e.g. scripts/trigger-a2a.sh).
+      - type: Agent
+        agent:
+          kind: Agent
+          name: trace-agent
+      # MCP tools for cross-referencing deploy state + runbooks. toolNames is
+      # required in kagent 0.7.2 for MCPs in non-controller namespaces.
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: argocd-mcp
+          toolNames: [argocd_list_apps, argocd_get_app]
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: git-mcp
+          toolNames: [git_recent_commits, git_get_file]
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: kagent-tools
+          # kagent-tools exposes the full kagent-tools MCP surface. These are
+          # the actual MCP tool names (verified via /mcp tools/list).
+          toolNames:
+            - k8s_get_resources
+            - k8s_apply_manifest
+            - k8s_delete_resource
+            - k8s_execute_command
+            - k8s_scale
+            - k8s_patch_resource
+            - k8s_rollout
+            - k8s_describe_resource
+            - k8s_get_resource_yaml
+            - k8s_get_events
+            - k8s_get_pod_logs

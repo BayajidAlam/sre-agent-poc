@@ -1,0 +1,19 @@
+{
+  "version": "4",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "service": "payment",
+        "namespace": "apps-demo",
+        "severity": "critical"
+      },
+      "annotations": {
+        "summary": "payment 500s above 25% threshold after v2 rollout",
+        "description": "Payment service v2 deployment started. Returning 50% errors with 8s latency on /checkout. Investigate and consider rollback."
+      }
+    }
+  ]
+}

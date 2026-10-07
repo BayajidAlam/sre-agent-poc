@@ -1,0 +1,48 @@
+# kube-prometheus-stack values for the POC.
+# Includes Alertmanager webhook config that forwards to the kagent Webhook CR.
+prometheus:
+  prometheusSpec:
+    retention: 2h
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 1Gi }
+    # OTel collector sidecar service for remote write
+    additionalScrapeConfigs:
+      - job_name: 'otel-collector'
+        static_configs:
+          - targets: ['otel-collector.observability:8889']
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 200m, memory: 256Mi }
+    config:
+      route:
+        receiver: 'kagent-rca'
+        group_wait: 10s
+        group_interval: 30s
+        repeat_interval: 5m
+      receivers:
+        - name: 'kagent-rca'
+          webhook_configs:
+            - url: 'http://rca-agent.agent-read.svc.cluster.local:8080/webhook/alertmanager'
+              send_resolved: true
+
+grafana:
+  enabled: true
+  adminPassword: admin
+  service:
+    type: NodePort
+    nodePort: 30000
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: observability
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.observability:3100
+    - name: Tempo
+      type: tempo
+      url: http://tempo.observability:3200

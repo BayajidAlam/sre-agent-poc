@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sre-poc.local/schemas/incident-context.json",
+  "title": "IncidentContext",
+  "description": "Output of trace-agent. Echoes trace IDs, log lines, and metric names verbatim from tool responses. No paraphrasing.",
+  "type": "object",
+  "required": [
+    "incident_id",
+    "service",
+    "window_start",
+    "window_end",
+    "severity",
+    "traces",
+    "logs",
+    "metrics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "type": "string",
+      "description": "Stable identifier (e.g., alert fingerprint).",
+      "minLength": 1
+    },
+    "service": {
+      "type": "string",
+      "description": "Kubernetes service name (e.g., payment, inventory, checkout)."
+    },
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace of the affected service."
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "error", "critical"]
+    },
+    "traces": {
+      "type": "array",
+      "description": "Top N failing/erroring traces from Tempo. IDs are echoed verbatim.",
+      "items": {
+        "type": "object",
+        "required": ["trace_id", "root_service", "status", "duration_ms"],
+        "additionalProperties": false,
+        "properties": {
+          "trace_id": { "type": "string", "minLength": 1 },
+          "root_service": { "type": "string" },
+          "status": { "type": "string", "enum": ["ok", "error", "unset"] },
+          "http_status": { "type": "integer" },
+          "duration_ms": { "type": "number", "minimum": 0 },
+          "error_message": { "type": "string" }
+        }
+      }
+    },
+    "logs": {
+      "type": "array",
+      "description": "Matching log bursts from Loki. Lines are echoed verbatim.",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "service", "level", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "timestamp": { "type": "string", "format": "date-time" },
+          "service": { "type": "string" },
+          "level": { "type": "string", "enum": ["debug", "info", "warn", "error"] },
+          "message": { "type": "string", "minLength": 1 },
+          "trace_id": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "description": "Relevant metrics from Prometheus. Names are echoed verbatim.",
+      "items": {
+        "type": "object",
+        "required": ["name", "labels", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "labels": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "value": { "type": "number" },
+          "unit": { "type": "string" }
+        }
+      }
+    }
+  }
+}

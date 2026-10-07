@@ -1,0 +1,57 @@
+global:
+  resolve_timeout: 5m
+inhibit_rules:
+- equal:
+  - namespace
+  - alertname
+  source_matchers:
+  - severity = critical
+  target_matchers:
+  - severity =~ warning|info
+- equal:
+  - namespace
+  - alertname
+  source_matchers:
+  - severity = warning
+  target_matchers:
+  - severity =~ info
+- equal:
+  - namespace
+  source_matchers:
+  - alertname = InfoInhibitor
+  target_matchers:
+  - severity = info
+- target_matchers:
+  - alertname = InfoInhibitor
+receivers:
+- name: "null"
+- name: "sre-pipeline"
+  webhook_configs:
+    - url: "http://alert-bridge.agent-read.svc.cluster.local:9094/alerts"
+      send_resolved: true
+- name: "critical"
+  webhook_configs:
+    - url: "http://alert-bridge.agent-read.svc.cluster.local:9094/alerts"
+      send_resolved: true
+route:
+  group_by:
+  - namespace
+  - alertname
+  group_interval: 5m
+  group_wait: 10s
+  receiver: "sre-pipeline"
+  repeat_interval: 1h
+  routes:
+  - matchers:
+    - alertname =~ "TargetDown|KubeProxyInstanceUnreachable|KubeControllerManagerDown|KubeSchedulerDown|etcdInsufficientMembers|Watchdog"
+    receiver: "null"
+  - matchers:
+    - alertname =~ "InfoInhibitor"
+    receiver: "null"
+  - matchers:
+    - severity = "critical"
+    - alertname !~ "TargetDown|Kube|Watchdog"
+    receiver: "critical"
+    group_wait: 5s
+templates:
+- /etc/alertmanager/config/*.tmpl

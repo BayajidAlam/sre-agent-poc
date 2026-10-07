@@ -1,0 +1,59 @@
+# Scoped RW for remediator-agent — only apps-demo and agent-write namespaces.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-write
+  namespace: agent-write
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-write-apps-demo
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-write-apps-demo
+  namespace: apps-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-write-apps-demo
+subjects:
+  - kind: ServiceAccount
+    name: agent-write
+    namespace: agent-write
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-write-self
+  namespace: agent-write
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "configmaps", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-write-self
+  namespace: agent-write
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-write-self
+subjects:
+  - kind: ServiceAccount
+    name: agent-write
+    namespace: agent-write

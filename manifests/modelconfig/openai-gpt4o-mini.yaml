@@ -1,0 +1,26 @@
+# ModelConfig — OpenAI gpt-4o-mini for all POC agents.
+# The controller picks this up by name when an Agent CR references it via
+# spec.declarative.modelConfig (or spec.modelConfig on v1alpha1).
+#
+# The OpenAI API key is NOT in this file. It must be supplied via:
+#   kubectl -n kagent create secret generic kagent-openai \
+#     --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY"
+# (install-kagent-controller.sh does this idempotently.)
+#
+# The controller pod reads the secret via the apiKeySecret / apiKeySecretKey
+# fields below and exposes OPENAI_API_KEY to its own runtime; agent pods inherit.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: openai-gpt4o-mini
+  namespace: kagent
+  labels:
+    sre-poc/component: llm-provider
+spec:
+  provider: OpenAI
+  model: gpt-4o-mini
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  openAI:
+    # Keep total cost / latency low; agents return small schema-valid JSON payloads.
+    maxTokens: 2048

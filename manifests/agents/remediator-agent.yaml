@@ -1,0 +1,102 @@
+# remediator-agent — applier (plan §5)
+# Consumes RCAFinding, builds RemediationAction, evaluates policy-mcp, executes
+# only on allow. Bound to policy-mcp via a ToolServer reference (see Phase C).
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: remediator-agent
+  namespace: agent-read
+  labels:
+    sre-poc/role: applier
+spec:
+  type: Declarative
+  description: |
+    Consume RCAFinding, build a RemediationAction, evaluate policy-mcp,
+    execute or halt (schemas/remediation-action.json).
+  declarative:
+    modelConfig: gemini-2-flash-lite
+    stream: true
+    systemMessage: |
+      You are the remediation agent of an SRE incident-response pipeline.
+      You receive an RCAFinding from rca-agent.
+
+      Your job:
+
+      1. Construct a RemediationAction JSON conforming to
+         schemas/remediation-action.json:
+           - incident_id: from the RCAFinding
+           - tool: the same tool the RCA proposed
+           - op: the same op
+           - target_namespace: the namespace being changed
+           - target_resource: the resource being changed
+           - requested_by: "remediator-agent"
+           - created_at: RFC3339 UTC timestamp
+           - risk: from the RCAFinding
+           - confidence: from the RCAFinding
+      2. If you have a policy-mcp tool (mcpServer named policy-mcp-shim in the
+         agent-read namespace), call policy-mcp-shim.policy_evaluate(action) and read
+         the {allow, reason} response.
+      3. If allow=false or the tool is unavailable, you MUST set
+         policy_decision.allow=false (use reason="no-policy-mcp" if the
+         tool was missing) and return the RemediationAction with NO
+         target_resource set. Do not perform any cluster write.
+      4. If allow=true, perform the kubectl/argocd/etc. operation via the
+         kagent-tools MCP. For rollout.undo on a Deployment, call the
+         k8s_rollout tool with action="undo", resource_type="deployment",
+         resource_name="<name>", namespace="<ns>".
+         For kubectl delete, prefer k8s_delete_resource with a scoped name;
+         never delete a NetworkPolicy, Node, or CRD.
+      5. After applying (or halting), emit a Slack notification via the
+         slack-mcp tool if available; otherwise, write a structured log
+         message.
+      6. Output the final RemediationAction JSON, including the
+         policy_decision block, conforming to schemas/remediation-action.json.
+         Return ONLY that JSON.
+    a2aConfig:
+      skills:
+        - id: remediate
+          name: Apply Remediation
+          description: Evaluates policy then executes remediation actions safely.
+          tags: [remediation, write, policy-gated]
+    tools:
+      # A2A peer: cross-namespace reference to rca-agent in agent-read.
+      # The Agent CRD doesn't accept a `namespace` field directly; cross-ns
+      # refs in kagent 0.7 require the peer Agent to be discoverable via the
+      # controller's watch list. Add rca-agent's namespace to
+      # controller.watchNamespaces via helm if this fails to resolve.
+      - type: Agent
+        agent:
+          kind: Agent
+          name: rca-agent
+      # kagent-tools (chart built-in) — kubectl/get/apply/exec against the
+      # cluster. Already cluster-scoped via the controller's ServiceAccount.
+      # toolNames is required in kagent 0.7.2 for MCPs in non-controller namespaces.
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: kagent-tools
+          toolNames:
+            - k8s_get_resources
+            - k8s_apply_manifest
+            - k8s_delete_resource
+            - k8s_execute_command
+            - k8s_scale
+            - k8s_patch_resource
+            - k8s_rollout
+            - k8s_describe_resource
+            - k8s_get_resource_yaml
+            - k8s_get_events
+            - k8s_get_pod_logs
+      # policy-mcp-shim — wraps the existing policy-mcp (POST /evaluate) so
+      # the agent can evaluate OPA policy through an MCP-protocol tool call.
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: policy-mcp-shim
+          toolNames: [policy_evaluate]
+      # slack-mcp — posts a Slack notification after apply/halt.
+      - type: McpServer
+        mcpServer:
+          kind: RemoteMCPServer
+          name: slack-mcp
+          toolNames: [slack_post_message, slack_list_messages]

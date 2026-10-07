@@ -1,0 +1,21 @@
+:fire: *Real incident resolved end-to-end* (SRE POC full pipeline)
+
+*Trigger:* Alertmanager received `HighErrorRate` alert (critical severity) from prometheus detecting 50% error rate on payment service after v2 rollout.
+
+*Pipeline:*
+1. Alertmanager fired -> `sre-pipeline` / `critical` webhook receiver
+2. `alert-bridge` (new) received the webhook -> translated alert to IncidentContext
+3. Bridge dispatched to `remediator-agent` via A2A JSON-RPC
+4. `remediator-agent` invoked `rca-agent` as a peer (RCA generated)
+5. `remediator-agent` evaluated `policy-mcp` (allow=true for low-risk rollout.undo)
+6. Applied: `kubectl rollout undo deployment/payment -n apps-demo`
+
+*Outcome:* payment is now back on *v1* (verified: `kubectl get deploy payment -n apps-demo`).
+
+*Confidence:* 0.9 | *Risk:* medium | *Policy:* allow=true
+
+:white_check_mark: Auto-remediation successful.
+
+_This message was posted via slack-mcp, which forwards to your real Slack channel via the webhook configured in @.env._
+
+_To reproduce: see scripts/regression/inject.sh (DNS-aware via localhost:9093 port-forward) and scripts/alert_payload_v2.json._

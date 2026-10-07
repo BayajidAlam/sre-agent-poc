@@ -1,0 +1,66 @@
+# =============================================================================
+#  sre-agent POC — .gitignore
+#  Keep the public mirror at https://github.com/BayajidAlam/sre-agent-poc
+#  free of secrets, large binaries, and runtime artifacts.
+# =============================================================================
+
+# ----- Secrets & credentials (NEVER commit) ----------------------------------
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+kubeconfig
+kubeconfig.*
+**/kubeconfig
+**/kubeconfig.*
+
+# ----- Binaries (downloaded on demand by scripts/poc-up.sh) ------------------
+bin/
+**/bin/
+*.exe
+**/*.exe
+
+# ----- Node.js dependencies (reinstall with `npm install`) --------------------
+node_modules/
+**/node_modules/
+
+# ----- Runtime / session / IDE state -----------------------------------------
+.helm-cache/
+.puku/
+.puku-cli/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ----- Logs & ephemeral run output -------------------------------------------
+logs/
+*.log
+*.log.*
+poc-up.log
+.tmp-*
+.tmp/
+
+# ----- Generated diagrams (rendered by `make archify-*` on demand) ----------
+docs/archify/*.html
+docs/archify/*.delivery.json
+!docs/archify/*.architecture.json
+!docs/archify/*.workflow.json
+
+# ----- Build / coverage output -----------------------------------------------
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# ----- OS / editor chatter ---------------------------------------------------
+*.bak
+*~
