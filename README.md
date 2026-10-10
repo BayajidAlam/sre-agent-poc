@@ -2,7 +2,7 @@
 
 3-agent incident-response pipeline (`trace-agent → rca-agent → remediator-agent`) running on [kagent](https://github.com/kagent-dev/kagent), gated by OPA, with read-only observability on Prometheus + Loki + Tempo.
 
-See [`plan/POC_plan.md`](plan/POC_plan.md) for the full plan and architecture diagram at [`docs/images/Kubernetes Multi-Agent Incident Response Architecture.png`](docs/images/Kubernetes%20Multi-Agent%20Incident%20Response%20Architecture.png).
+See [`plan/POC_plan.md`](plan/POC_plan.md) for the full plan and architecture diagram at [`docs/images/Kubernetes Multi-Agent Incident Response Architecture.png`](docs/images/Kubernetes%20Multi-Agent%20Incident%20Response%20Architecture.png). For a live, interactive runtime diagram, run `make archify-sre-agent` and open [`docs/archify/sre-agent.architecture.html`](docs/archify/sre-agent.architecture.html) (rendered from [`docs/archify/sre-agent.architecture.json`](docs/archify/sre-agent.architecture.json)).
 
 ---
 
@@ -30,14 +30,15 @@ bash scripts/deploy-missing.sh
 | `schemas/` | A2A JSON contracts (incident-context, rca-finding, remediation-action) — validated by ajv |
 | `apps/demo-service/` | Node.js demo with `/api/checkout` → `/api/payment`, `/api/inventory` |
 | `infra/` | Helm values for Prometheus, Loki, Tempo, OTel Collector, Grafana dashboard |
-| `manifests/mcp/` | kagent MCP server CRs (kubectl, tempo, loki, prometheus, argocd, git, slack, policy) |
+| `manifests/mcp/` | kagent `RemoteMCPServer` CRs (prometheus, loki, tempo, alertmanager, argocd, git, slack, policy-mcp-shim) + a kagent-tools alias |
 | `manifests/agents/` | The 3 Agent CRs with prompts from plan §5 |
 | `manifests/rbac/` | agent-read (RO) and agent-write (scoped RW) bindings |
-| `manifests/webhook/` | Alertmanager → kagent Webhook |
 | `manifests/dashboard/` | Official Kubernetes Dashboard (the cluster's own UI) + admin-user |
-| `policy/` | OPA policy + policy-mcp wrapper (Node.js) + tests |
+| `policy/` | OPA policy + policy-mcp wrapper (Node.js) |
+| `mcp-servers/_base/` | Shared Python base image (FROM shim-base:dev) used by all 8 MCP shims |
+| `mcp-servers/<shim>/` | One Python MCP shim per backend (prometheus, loki, tempo, alertmanager, argocd, git, slack, policy-mcp-shim) |
 | `scenarios/` | `regression/inject.sh` (Scenario A), `db-failure/inject.sh` (Scenario B) |
-| `tests/` | ajv schema tests, OPA sync, policy-sim, YAML lint |
+| `tests/` | ajv schema tests, OPA sync, YAML lint |
 | `scripts/` | bootstrap (`poc-up.sh`), UI helper (`open-ui.ps1`), Dashboard token (`get-dashboard-token.ps1`), recovery (`deploy-missing.sh`) |
 | `Makefile` | Single-command orchestration (incl. `archify-*` targets) |
 
@@ -69,66 +70,70 @@ The output is a self-contained HTML file under `docs/archify/` that can be opene
 $ npm test
 6/6 schema tests passed
 6/6 policy-sync checks passed
-7/7 policy tests passed
-20/20 YAML lint checks passed
-+ policy-mcp smoke: 4/4 (HTTP roundtrip with stub OPA)
-+ demo-service smoke: 5/5 (Express route handlers)
-+ LIVE cluster policy-gate test (after make poc-up):
-    Scenario A (rollout.undo, low risk,  conf=0.9) -> allow: TRUE   -> payment rolled back v2->v1
-    Scenario B (kubectl delete NP, high risk)     -> allow: FALSE  -> NetworkPolicy preserved
-    Scenario B (kubectl delete, cluster=ok ns)       -> allow: FALSE  -> default-deny
-    Scenario B (low confidence)                   -> allow: FALSE  -> default-deny
-+ kagent controller bring-up (0.7.2):
+45/45 YAML lint checks passed
++ kagent controller bring-up (v0.7.2, gemini-2-flash-lite):
     pods/kagent-controller = 1/1 Running
-    pods/kagent-ui = 1/1 Running
-    modelconfig/default-model-config = OpenAI / gpt-4o-mini
-+ kagent Agent CRs (v1alpha2, Declarative):
+    pods/kagent-ui        = 1/1 Running
+    modelconfig/gemini-2-flash-lite = model: gemini-2.0-flash-lite
++ kagent Agent CRs (v1alpha2, Declarative, ns: agent-read):
     agents/trace-agent      READY=True ACCEPTED=True
     agents/rca-agent        READY=True ACCEPTED=True
     agents/remediator-agent READY=True ACCEPTED=True
++ 9/9 RemoteMCPServer CRs ACCEPTED=True (prometheus, loki, tempo,
+    alertmanager, argocd, git, slack, policy-mcp-shim, kagent-tools)
 + A2A handshake (LIVE trace-agent via kagent-controller:8083):
-    POST /api/a2a/agent-read/trace-agent/  ->  JSON-RPC task accepted,
-    history shows the user message + agent attempt; final agent response
-    blocked only by Gemini 401 (placeholder key).
+    POST /api/a2a/agent-read/trace-agent/ -> JSON-RPC task object
+    containing the agent's tool calls (tempo_search, loki_query,
+    prom_query) and a schema-valid IncidentContext result.
++ Live MCP tool calls (via the 8 rebuilt shims):
+    prometheus prom_query 'up'  -> real kube-prometheus data
+    policy policy_evaluate      -> allow for rollout.undo,
+                                   deny for low-confidence / cluster-scoped
++ LIVE cluster policy-gate test (after make poc-up):
+    Scenario A (rollout.undo, low risk, conf=0.9) -> allow: TRUE  -> payment rolled back v2->v1
+    Scenario B (kubectl delete NP, high risk)    -> allow: FALSE -> NetworkPolicy preserved
+    Scenario B (kubectl delete, cluster=ok ns)    -> allow: FALSE -> default-deny
+    Scenario B (low confidence)                  -> allow: FALSE -> default-deny
 ```
 
 | Test | What it proves |
 |---|---|
 | **ajv schema tests** | All 3 A2A JSON contracts accept valid payloads and reject malformed ones |
 | **OPA sync test** | The `policy/sre.rego` source and the bundled copy in `policy/opa.yaml` haven't drifted |
-| **policy-sim** | All 4 deny conditions + 2 allow conditions match the Rego semantics |
-| **YAML lint** | All 24 K8s manifests parse cleanly (no tabs, even indentation) |
-| **policy-mcp smoke** | HTTP wrapper around OPA works end-to-end with default-deny on errors |
-| **demo-service smoke** | Express routes are alive; error path is reachable for agents to detect |
+| **YAML lint** | All 45 K8s manifests parse cleanly (no tabs, even indentation) |
+| **Live A2A** | trace-agent accepts a real JSON-RPC `message/send`, invokes MCP tools, returns a valid `IncidentContext` |
+| **Live MCP tools** | Each of the 8 shims responds to the MCP `initialize` + `tools/list` handshake; `prom_query` and `policy_evaluate` return real results |
 | **LIVE policy gate** | OPA `sre.rego` + policy-mcp correctly allow `rollout.undo` and deny all 3 risky patterns; the actual cluster write only happens for the allow case |
 
 ## Known gaps vs. the original plan
 
 The plan (`plan/POC_plan.md`) was written against an early/proposed kagent API. The
-shipping kagent 0.6.x API required significant manifest updates:
+shipping kagent 0.7.2 API required significant manifest updates:
 
 | Plan said | We shipped | Why |
 |---|---|---|
-| `apiVersion: kagent.io/v1alpha1` | `apiVersion: kagent.dev/v1alpha1` | The kagent project moved from `kagent.io` to `kagent.dev` |
-| `kind: MCPServer` (inline deploy) | `kind: RemoteMCPServer` (points at an MCP server URL) | kagent 0.6 separates MCP server lifecycle from referencing it |
-| `kind: Webhook` CR for Alertmanager | removed | No `Webhook` CR in installed CRDs — alertmanager POSTs to kagent controller's HTTP endpoint instead |
-| MCP server image: `ghcr.io/kagent-org/*` | `RemoteMCPServer` referencing `*.svc.cluster.local:8080/mcp` | Those images are not publicly available; in POC we reference MCP server URLs that need to be deployed separately |
+| `apiVersion: kagent.io/v1alpha1` | `apiVersion: kagent.dev/v1alpha2` | The kagent project moved from `kagent.io` to `kagent.dev` and bumped to v1alpha2 |
+| `kind: MCPServer` (inline deploy) | `kind: RemoteMCPServer` (points at an MCP server URL) | kagent 0.7 separates MCP server lifecycle from referencing it |
+| `kind: Webhook` CR for Alertmanager | removed (HTTP POST instead) | No `Webhook` CR in installed CRDs — alertmanager POSTs to the kagent controller's HTTP endpoint instead |
+| MCP server image: `ghcr.io/kagent-org/*` | 8 self-hosted Python shims under `mcp-servers/` | Those images are not publicly available; we build the shims in-cluster and reference their `*.svc.cluster.local:80/mcp` URLs |
 | Full agent prompts in `systemPrompt` field | minimal `description` only | The `systemPrompt`/`mcpServers`/`systemMessage` keys were renamed/moved between kagent versions; getting them right requires the kagent controller running and matching examples |
+| OpenAI as default LLM | Gemini 2.0 Flash Lite | Free tier (15 RPM / 1500 RPD) covers the POC. Set `OPENAI_API_KEY` in `.env` + switch `manifests/kagent-values-gemini.yaml` to use `providers.openAI` to use OpenAI instead. |
 
-The **3 Agent CRs, the kagent controller (v0.7.2), OPA + policy-mcp, demo app, and full
+The **3 Agent CRs, the kagent controller (v0.7.2), OPA + policy-mcp, the 8 MCP shims, the demo app, and the full
 observability stack (Prometheus + Alertmanager + Grafana + Loki + Tempo + OTel) all
 deploy cleanly and the LIVE policy gate test passes**. As of this iteration, the
 controller is installed and all three Agent CRs reach `READY=True, ACCEPTED=True`;
 the A2A handshake has been verified end-to-end (POST `/api/a2a/agent-read/trace-agent/`
-returns a JSON-RPC task object that is then forwarded to OpenAI).
+returns a JSON-RPC task object that includes the agent's tool-call attempts and a
+schema-valid `IncidentContext`).
 
 **Known limits vs. the original plan:**
 
 | Item | Status | Notes |
 |---|---|---|
-| 5 of 6 RemoteMCPServer CRs (loki/prometheus/tempo/argocd/git/slack) | **Removed** | No backend pods in cluster; in kagent 0.7 an unresolved `RemoteMCPServer` ref keeps the agent NotReady. Deploy real backends later. |
-| policy-mcp as a ToolServer | **Deferred** | policy-mcp speaks plain HTTP (`POST /evaluate`), not MCP. Needs a thin MCP-protocol shim wrapping policy-mcp. OPA gate is verified independently by the LIVE policy-gate tests. |
-| Cross-namespace peer ref `agent-write → agent-read` | **Workaround applied** | All 3 agents now live in `agent-read`. The CRD rejects `tools[].agent.namespace`; kagent 0.7 doesn't have a public cross-ns ref form. |
+| policy-mcp as a ToolServer | **Shipped** | `policy-mcp-shim` (`mcp-servers/policy-mcp-shim/`) wraps the existing Node.js `policy-mcp` HTTP endpoint behind an MCP StreamableHTTP server, so agents can call `policy_evaluate` as a normal MCP tool. |
+| Cross-namespace peer ref `agent-write → agent-read` | **Workaround applied** | All 3 agents + 7 of the 8 shims live in `agent-read`; only `policy-mcp` and OPA sit in `agent-write` (where the upstream policy-mcp service already lives). |
+| Single LLM provider per cluster | **By design** | ModelConfig is per-namespace (`gemini-2-flash-lite` for both `kagent` and `agent-read`); switch by editing the ModelConfig CR, not the Agent CRs. |
 
 **To run an end-to-end LLM-driven scenario test** (after `make poc-up`):
 
@@ -138,10 +143,7 @@ bash scripts/install-kagent-controller.sh # creates the Secret + ModelConfig
 make trigger-a2a payment                 # synthetic A2A request to trace-agent
 ```
 
-The default placeholder key (`dummy-replace-with-real-key`) is fine for
-proving the controller and Agent CRs are wired correctly, but the LLM call
-will return an auth error from Gemini until you set a real `GOOGLE_API_KEY`.
-Free tier covers ~500 full chain runs/day (15 RPM / 1500 RPD).
+A real `GOOGLE_API_KEY` is required for the agents to actually call Gemini. The free tier covers ~500 full chain runs/day (15 RPM / 1500 RPD).
 
 ## Exposing UIs from Windows
 
@@ -181,12 +183,12 @@ manifests under `manifests/dashboard/` and applies them via `scripts/poc-up.sh`.
 ```powershell
 .\scripts\get-dashboard-token.ps1
 # Prints a token and starts a port-forward in the background.
-# Open https://192.168.0.102:19443/  (browser will warn about self-signed
+# Open https://<your-host-IP>:19443/  (browser will warn about self-signed
 # cert — accept it). On the login page, choose "Token" and paste the printed
 # value.
 ```
 
-Browser will display `Your connection is not private` (NET::ERR_CERT_AUTHORITY_INVALID) — that's the dashboard's auto-generated self-signed cert. Click **Advanced → Proceed to 192.168.0.102 (unsafe)** to continue. The token is the login.
+Browser will display `Your connection is not private` (NET::ERR_CERT_AUTHORITY_INVALID) — that's the dashboard's auto-generated self-signed cert. Click **Advanced → Proceed to &lt;your-host-IP&gt; (unsafe)** to continue. The token is the login.
 
 ### ⚠️ WSL relay gotcha: `localhost` still won't work
 
@@ -202,14 +204,13 @@ adapter IP — get it from `ipconfig`):
 
 | UI             | Working URL on this host                  |
 |----------------|-------------------------------------------|
-| **Grafana**    | http://192.168.0.102:**13000**             |
-| **Loki**       | http://192.168.0.102:**13100**/ready       |
-| **Tempo**      | http://192.168.0.102:**13200**/ready       |
-| **Prometheus** | http://192.168.0.102:**19090**             |
-| **Alertmanager** | http://192.168.0.102:**19093**           |
+| **Grafana**    | http://&lt;your-host-IP&gt;:**13000**         |
+| **Loki**       | http://&lt;your-host-IP&gt;:**13100**/ready   |
+| **Tempo**      | http://&lt;your-host-IP&gt;:**13200**/ready   |
+| **Prometheus** | http://&lt;your-host-IP&gt;:**19090**         |
+| **Alertmanager** | http://&lt;your-host-IP&gt;:**19093**       |
 
-(IP shown is the one captured during POC verification on the host. Run
-`ipconfig` on your own machine and substitute.)
+(Replace `&lt;your-host-IP&gt;` with the IPv4 address shown by `ipconfig` on your Windows host. The IP captured during POC verification on the original author's host was 192.168.0.102.)
 
 This works because Docker forwards `0.0.0.0:<hostPort>` (which includes
 192.168.x.x) — wslrelay only intercepts `127.0.0.1`, not arbitrary LAN IPs.
@@ -235,29 +236,31 @@ Username is `admin` for both.
 ## Architecture (matches diagram)
 
 ```
-            Prometheus / Alertmanager (webhook)
-                          │
-                          ▼
-                ┌─────────────────────┐
-                │  Kubernetes cluster │
-                │  ┌───────────────┐  │
-                │  │ kagent Ctrl   │  │
-                │  └───────────────┘  │
-                │  ┌──────────┐ A2A ┌──────────┐ A2A ┌──────────────┐│
-                │  │trace-agt │◄───►│ rca-agent│◄───►│remediator-agt││
-                │  │   (RO)   │     │  (reason)│     │ (scoped RW) ││
-                │  └────┬─────┘     └────┬─────┘     └──────┬───────┘│
-                │       │ MCP            │ MCP              │ MCP    │
-                └───────┼────────────────┼──────────────────┼────────┘
-                        ▼                ▼                  ▼
-                  Tempo/Loki/Prom   ArgoCD/Git          kubectl
-                        │                │                  │
-                        └──────┐  ┌──────┘                  ▼
-                               ▼  ▼                  ┌──────────┐
-                          OPA policy gate ←─────────│policy-mcp│
-                               │                    └──────────┘
-                               ▼
-                          Slack notifier
+   Prometheus + Alertmanager + Loki + Tempo
+                  │            ▲
+            firing │            │ PromQL/LogQL/TraceQL
+            rules  ▼            │
+            ┌──────────┐    ┌───┴───────────────────────────────────────┐
+            │ Alertmgr │───▶│ kagent Ctrl (v0.7.2)                       │
+            └──────────┘    │                                           │
+                            │  A2A dispatch                              │
+                            │  ┌──────────┐ A2A ┌──────────┐ A2A ┌─────┴──┐
+                            │  │trace-agt │────▶│ rca-agent│────▶│ remediator│
+                            │  │  (RO)    │     │ (reason) │     │ (scoped RW)│
+                            │  └────┬─────┘     └────┬─────┘     └────┬─────┘
+                            │       │ MCP            │ MCP            │ MCP
+                            │       ▼                ▼                ▼
+                            │   tempo/loki/prom   argocd/git     kagent-tools (kubectl)
+                            │   shims in agent-read ns            policy-mcp-shim
+                            │                                          │
+                            │                                          ▼
+                            │   ┌────────────────────────────────────┐
+                            └──▶│ OPA Rego (sre.rego)  ◀── policy-mcp │ (agent-write ns)
+                                └────────────────────────────────────┘
+                                               ▲
+                                               │ allow/deny
+                                               │
+                                          remediator-agent
 ```
 
 ## Safety guarantees (defense in depth)
