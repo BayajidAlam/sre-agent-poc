@@ -32,6 +32,13 @@ alertmanager:
 grafana:
   enabled: true
   adminPassword: admin
+  # The chart ships 17+ dashboards (AIX, MacOS, USE Method, Compute Resources
+  # Cluster/Workload/Pod, etc.) that are noisy or empty on a single-node kind
+  # cluster. Disable them — we ship our own SRE POC overview dashboard under
+  # infra/grafana/dashboards/ and rely on Grafana's built-in datasources for
+  # anything else (Prometheus/Loki/Tempo Explore pages work fine without a
+  # pre-baked dashboard).
+  defaultDashboardsEnabled: false
   service:
     type: NodePort
     nodePort: 30000

@@ -1,4 +1,5 @@
-# OpenTelemetry Collector — receives OTLP from apps and exports to Tempo/Prometheus/Loki.
+# OpenTelemetry Collector — receives OTLP from apps and exports to Tempo (traces),
+# Prometheus (metrics via the prometheus exporter), and Loki (logs).
 mode: deployment
 image:
   repository: otel/opentelemetry-collector-contrib
@@ -12,14 +13,43 @@ presets:
 
 config:
   exporters:
+    # Traces -> Tempo (OTLP gRPC).
     otlp:
       endpoint: tempo.observability:4317
       tls: { insecure: true }
+    # Metrics -> exposed on :8889 for Prometheus to scrape. The `prometheus`
+    # exporter maps OTLP cumulative/Delta metrics to Prometheus exposition
+    # format. Combined with the OTel HTTP server auto-instrumentation on
+    # demo-service, this populates http_server_duration_seconds_bucket and
+    # http_requests_total so the SRE POC overview dashboard actually has data.
+    prometheus:
+      endpoint: 0.0.0.0:8889
+      # Re-emit the OTel resource attributes as Prometheus labels so we can
+      # filter by service_name in PromQL.
+      resource_to_telemetry_conversion:
+        enabled: true
+    # Logs -> Loki. The `loki` exporter posts JSON-encoded log records to
+    # Loki's /loki/api/v1/push endpoint. The `level` attribute on each log
+    # record becomes a Loki label, so the SRE POC overview dashboard's
+    # `{level="error"}` query works.
+    loki:
+      endpoint: http://loki.observability:3100/loki/api/v1/push
   processors:
     batch:
       timeout: 5s
     memory_limiter:
       limit_mib: 512
+    # Re-attribute every log record to a level derived from its severity number
+    # so the Loki `level` label is set consistently. Without this, OTLP logs
+    # only carry `severity_text` and Loki would not index it as a label.
+    transform/logs:
+      error_mode: ignore
+      log_statements:
+        - context: log
+          statements:
+            - set(attributes["level"], "error") where severity_number >= SEVERITY_NUMBER_ERROR
+            - set(attributes["level"], "warn")  where severity_number >= SEVERITY_NUMBER_WARN and severity_number < SEVERITY_NUMBER_ERROR
+            - set(attributes["level"], "info")  where severity_number >= SEVERITY_NUMBER_INFO  and severity_number < SEVERITY_NUMBER_WARN
   receivers:
     otlp:
       protocols:
@@ -31,6 +61,14 @@ config:
         receivers: [otlp]
         processors: [memory_limiter, batch]
         exporters: [otlp]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, transform/logs, batch]
+        exporters: [loki]
 
 resources:
   requests: { cpu: 100m, memory: 128Mi }

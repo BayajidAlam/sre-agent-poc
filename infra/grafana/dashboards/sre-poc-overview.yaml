@@ -3,36 +3,72 @@ kind: ConfigMap
 metadata:
   name: grafana-dashboard-sre-poc
   namespace: observability
-  labels: { grafana_dashboard: "true" }
+  labels: { grafana_dashboard: "1" }
 data:
   sre-poc-overview.json: |
     {
       "title": "SRE POC Overview",
       "uid": "sre-poc-overview",
       "schemaVersion": 39,
+      "tags": ["sre-poc", "demo"],
+      "time": { "from": "now-30m", "to": "now" },
+      "refresh": "10s",
+      "templating": {
+        "list": [
+          {
+            "name": "service",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "prometheus" },
+            "query": "label_values(http_server_duration_seconds_bucket, service_name)",
+            "refresh": 2,
+            "includeAll": true,
+            "multi": true
+          }
+        ]
+      },
       "panels": [
         {
-          "title": "Latency p95 (checkout)",
+          "title": "Latency p95 (per service)",
           "type": "timeseries",
-          "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_seconds_bucket{service=\"checkout\"}[5m])) by (le))", "datasource": { "type": "prometheus", "uid": "prometheus" } }],
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_duration_seconds_bucket{service_name=~\"$service\"}[5m])))",
+            "legendFormat": "{{service_name}} p95"
+          }],
+          "fieldConfig": { "defaults": { "unit": "s" } },
           "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
         },
         {
-          "title": "Error rate (5xx)",
+          "title": "Request rate (per service)",
           "type": "timeseries",
-          "targets": [{ "expr": "sum(rate(http_requests_total{code=~\"5..\"}[5m])) by (service)", "datasource": { "type": "prometheus", "uid": "prometheus" } }],
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum by (service_name) (rate(http_server_duration_seconds_count{service_name=~\"$service\"}[5m]))",
+            "legendFormat": "{{service_name}}"
+          }],
+          "fieldConfig": { "defaults": { "unit": "reqps" } },
           "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
         },
         {
-          "title": "Request volume",
+          "title": "Error rate (5xx, per service)",
           "type": "timeseries",
-          "targets": [{ "expr": "sum(rate(http_requests_total[5m])) by (service)", "datasource": { "type": "prometheus", "uid": "prometheus" } }],
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum by (service_name) (rate(http_server_duration_seconds_count{service_name=~\"$service\", http_response_status_code=~\"5..\"}[5m])) / clamp_min(sum by (service_name) (rate(http_server_duration_seconds_count{service_name=~\"$service\"}[5m])), 1e-9)",
+            "legendFormat": "{{service_name}} 5xx"
+          }],
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
           "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
         },
         {
           "title": "Recent log errors",
           "type": "logs",
-          "targets": [{ "expr": "{level=\"error\"}", "datasource": { "type": "loki", "uid": "loki" } }],
+          "datasource": { "type": "loki", "uid": "loki" },
+          "targets": [{
+            "expr": "{service_name=~\".+\"} |~ \"(?i)(error|exception|failed)\" | line_format \"{{.service_name}}: {{.message}}\"",
+            "refId": "A"
+          }],
+          "options": { "showLabels": true, "showTime": true, "sortOrder": "Descending" },
           "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
         }
       ]
