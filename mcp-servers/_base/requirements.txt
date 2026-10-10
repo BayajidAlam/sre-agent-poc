@@ -1,0 +1,7 @@
+mcp==1.9.0
+httpx==0.27.2
+uvicorn==0.32.1
+starlette==0.41.2
+# pydantic must be <2.14 — mcp 1.9.0 imports pydantic._internal._typing_extra.eval_type_backport
+# which was removed in pydantic 2.14. Bumping pydantic requires bumping mcp too.
+pydantic<2.14

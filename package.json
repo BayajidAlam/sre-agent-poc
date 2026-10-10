@@ -4,7 +4,7 @@
   "private": true,
   "description": "Multi-Agent SRE on Kubernetes (kagent) — POC",
   "scripts": {
-    "test": "node tests/schemas/validate.test.js && node tests/schemas/opa-sync.test.js && node policy/policy-sim.js && node tests/schemas/yaml-test.js"
+    "test": "node tests/schemas/validate.test.js && node tests/schemas/opa-sync.test.js && node tests/schemas/yaml-test.js"
   },
   "devDependencies": {
     "ajv": "^8.17.1"

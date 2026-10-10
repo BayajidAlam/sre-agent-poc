@@ -76,13 +76,17 @@ cluster:                           ## Create kind cluster
 		kind create cluster --name $(CLUSTER_NAME) --config $(KIND_CONFIG); \
 	fi
 
+.PHONY: shim-base
+shim-base:                         ## Build the common Python base image all MCP shims share
+	@docker build -t shim-base:dev mcp-servers/_base
+
 .PHONY: kind-load-images
-kind-load-images:                  ## Load demo + MCP images into kind
+kind-load-images: shim-base        ## Load demo + MCP images into kind
 	@docker build -t demo-service:dev apps/demo-service
 	@kind load docker-image demo-service:dev --name $(CLUSTER_NAME)
 	@docker build -t policy-mcp:dev   policy
 	@kind load docker-image policy-mcp:dev --name $(CLUSTER_NAME)
-	@for shim in prometheus-mcp loki-mcp tempo-mcp alertmanager-mcp policy-mcp-shim argocd-mcp git-mcp slack-mcp slack-recorder; do \
+	@for shim in prometheus-mcp loki-mcp tempo-mcp alertmanager-mcp policy-mcp-shim argocd-mcp git-mcp slack-mcp; do \
 		docker build -t $$shim:dev mcp-servers/$$shim && \
 		kind load docker-image $$shim:dev --name $(CLUSTER_NAME); \
 	done
@@ -132,14 +136,14 @@ agents:                            ## Deploy MCP servers + 3 agents
 	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/webhook/
 
 .PHONY: mcp-shims
-mcp-shims:                         ## Build + load + deploy the 8 MCP shims
+mcp-shims: shim-base               ## Build + load + deploy the 8 MCP shims
 	@echo ">>> Building + loading 8 MCP shims"
-	@for shim in prometheus-mcp loki-mcp tempo-mcp alertmanager-mcp policy-mcp-shim argocd-mcp git-mcp slack-mcp slack-recorder; do \
+	@for shim in prometheus-mcp loki-mcp tempo-mcp alertmanager-mcp policy-mcp-shim argocd-mcp git-mcp slack-mcp; do \
 		docker build -t $$shim:dev mcp-servers/$$shim && \
 		kind load docker-image $$shim:dev --name $(CLUSTER_NAME); \
 	done
 	@echo ">>> Applying shim Deployments + Services"
-	@for shim in prometheus-mcp loki-mcp tempo-mcp alertmanager-mcp policy-mcp-shim argocd-mcp git-mcp slack-mcp slack-recorder; do \
+	@for shim in prometheus-mcp loki-mcp tempo-mcp alertmanager-mcp policy-mcp-shim argocd-mcp git-mcp slack-mcp; do \
 		$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f mcp-servers/$$shim/k8s/; \
 	done
 	@echo ">>> Applying RemoteMCPServer CRs"

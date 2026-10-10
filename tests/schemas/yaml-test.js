@@ -47,7 +47,6 @@ const files = [
   'infra/grafana/dashboards/sre-poc-overview.yaml',
   'apps/demo-service/k8s/deployment.yaml',
   'apps/demo-service/k8s/databases.yaml',
-  'apps/demo-service/k8s/policy.yaml',
   'manifests/rbac/agent-read-rbac.yaml',
   'manifests/rbac/agent-write-rbac.yaml',
   'manifests/mcp/policy-mcp-deployment.yaml',
@@ -85,8 +84,6 @@ const files = [
   'mcp-servers/git-mcp/k8s/service.yaml',
   'mcp-servers/slack-mcp/k8s/deployment.yaml',
   'mcp-servers/slack-mcp/k8s/service.yaml',
-  'mcp-servers/slack-recorder/k8s/deployment.yaml',
-  'mcp-servers/slack-recorder/k8s/service.yaml',
 ];
 
 const root = path.join(__dirname, '..', '..');

@@ -60,7 +60,8 @@ $HELM_BIN upgrade --install kagent "$CHART" \
   --set controller.image.tag=0.7.2 \
   --set kagent-tools.enabled=true \
   --set providers.gemini.maxTokens=4096 \
-  --set querydoc.enabled=false \
+  --set tools.querydoc.enabled=false \
+  --set tools.grafana-mcp.enabled=false \
   --set agents.k8s-agent.enabled=false \
   --set agents.kgateway-agent.enabled=false \
   --set agents.istio-agent.enabled=false \

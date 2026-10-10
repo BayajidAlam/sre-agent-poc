@@ -1,9 +1,0 @@
-:fire: *SRE POC incident resolved* via slack-mcp MCP agent code path
-
-*RCA:* payment v2 rollout caused 50% errors + 8s latency on /checkout
-*Fix applied:* kubectl rollout undo deployment/payment -n apps-demo
-*Confidence:* 0.9 | *Risk:* medium | *Policy:* allow=true
-
-:white_check_mark: payment service has been rolled back to v1.
-
-_(This message went through slack-mcp's slack_post_message tool, the same function remediator-agent invokes, and was forwarded to your real Slack channel via the configured webhook.)_
