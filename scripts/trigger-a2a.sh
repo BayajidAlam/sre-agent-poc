@@ -4,7 +4,7 @@
 #  the kagent controller's A2A endpoint, and stream the JSON-RPC response.
 #
 #  Requires:
-#    - The kagent controller to be installed (make install-controller).
+#    - The kagent controller to be installed (make kagent).
 #    - A kubectl port-forward to kagent-controller:8083 (the script will start
 #      one on $A2A_PORT if not already up).
 #    - A valid OPENAI_API_KEY in the kagent-openai secret for the trace-agent

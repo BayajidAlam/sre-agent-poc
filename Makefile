@@ -220,10 +220,6 @@ inject:                            ## Scenario A: auto-fixable regression
 inject-high:                       ## Scenario B: blocked high-risk
 	@bash scenarios/db-failure/inject.sh
 
-.PHONY: install-controller
-install-controller:                ## (Re)install just the kagent controller + ModelConfig
-	@bash scripts/install-kagent-controller.sh
-
 .PHONY: trigger-a2a
 trigger-a2a:                       ## Send a synthetic A2A request to trace-agent via the controller
 	@bash scripts/trigger-a2a.sh
