@@ -4,6 +4,8 @@
 
 See [`plan/POC_plan.md`](plan/POC_plan.md) for the full plan and architecture diagram at [`docs/images/Kubernetes Multi-Agent Incident Response Architecture.png`](docs/images/Kubernetes%20Multi-Agent%20Incident%20Response%20Architecture.png). For a live, interactive runtime diagram, run `make archify-sre-agent` and open [`docs/archify/sre-agent.architecture.html`](docs/archify/sre-agent.architecture.html) (rendered from [`docs/archify/sre-agent.architecture.json`](docs/archify/sre-agent.architecture.json)).
 
+For a worked end-to-end example of the pipeline (inject → rca-agent → remediator-agent → policy ALLOW → rollout undo → recovery), see [`docs/images/dashboard.png`](docs/images/dashboard.png) — a screenshot of the **demo-control** UI after one click of "Inject + Auto-fix: payment v2". Annotated walkthrough under [Visual demo](#visual-demo).
+
 ---
 
 ## TL;DR
@@ -23,6 +25,88 @@ make poc-down                        # tear down
 bash scripts/deploy-missing.sh
 ```
 
+## Visual demo
+
+The included `apps/demo-control` UI (http://localhost:15000 after
+`make demo-control && ./scripts/port-forwards.sh`) is the canonical
+way to drive the pipeline. It shows live cluster state and an
+activity feed of every agent action, so a single click of an "Inject"
+button runs the **full** chain:
+
+```text
+  click "Inject + Auto-fix: payment v2"
+      │
+      ▼
+  demo-control PATCHes the payment Deployment
+      │   (Kubernetes rolls out 2 Pods on v2 — payment now 50% error rate)
+      │
+      ▼
+  demo-control POSTs IncidentContext → kagent-controller → rca-agent
+      │
+      ▼
+  rca-agent: tool call agent_read__NS__trace_agent   (delegate to trace-agent)
+  rca-agent: tool call git_recent_commits
+  rca-agent: tool call git_get_file (runbooks/payment-regression.md)
+  rca-agent: tool call k8s_get_resources
+      │
+      ▼
+  rca-agent emits RCAFinding  { probable_cause, evidence, risk, confidence,
+                                 proposed_action: { tool: kubectl, op: rollout.undo,
+                                                    target_resource: deployment/payment } }
+      │
+      ▼
+  demo-control POSTs the RCAFinding → kagent-controller → remediator-agent
+      │
+      ▼
+  remediator-agent: tool call policy_evaluate(action)  → OPA: { allow: true }
+  remediator-agent: tool call k8s_rollout(action=undo)  → Kubernetes rolling update
+  remediator-agent: tool call slack_post_message         → optional notification
+      │
+      ▼
+  payment rolls back to v1, error rate drops to 0%
+```
+
+The screenshot below is the demo-control UI captured at the end of
+exactly that flow (after the 30s recovery):
+
+![demo-control UI after auto-fix of payment v2](docs/images/dashboard.png)
+
+**What the screenshot shows, top to bottom:**
+
+- **Header pills** — `np: clear` (no NetworkPolicy active), `task: done`
+  (last fix completed), `last poll: 01:06:55` (2 s polling is live).
+- **4 buttons** — `Inject + Auto-fix: payment v2` and
+  `Inject + Auto-fix: DB egress block` chain the inject into the
+  agent fix; `Trigger Agent Fix (no inject)` is the manual override;
+  `Reset all to v1` rolls everything back manually.
+- **Services (live) table** — all three are `🟢 healthy / v1 / fast / 0% / 2-2`
+  because the agents already rolled payment back from v2.
+- **Task summary** — `[completed] fix remediation applied: kubectl.rollout.undo
+  deployment/payment 44s (started 20:19:46)`. Confirms the run took
+  44 s end-to-end and the action was the expected `rollout.undo`.
+- **Agent activity feed** (newest at top in this build) — the full
+  transcript of the run, in order:
+  1. `rca-agent → dispatching IncidentContext to rca-agent` (UI-driven)
+  2. `rca-agent → tool call: agent_read__NS__trace_agent` (delegation)
+  3. `rca-agent → tool call: git_recent_commits, git_get_file, k8s_get_resources`
+  4. `rca-agent → RCAFinding: ... → kubectl.rollout.undo deployment/payment`
+  5. `remediator-agent → dispatching RCAFinding to remediator-agent`
+  6. `remediator-agent → tool call: policy_evaluate` (the OPA gate)
+  7. `remediator-agent → tool call: k8s_rollout` (the actual cluster write)
+  8. `remediator-agent → tool call: slack_post_message` (notification, optional)
+  9. `remediator-agent → policy ALLOW — executed kubectl.rollout.undo on deployment/payment`
+
+The single `WARN` in the feed is `slack_post_message returned error:
+Name or service not known` — harmless: this POC has no real Slack
+webhook configured, so the optional notification step fails. The
+cluster write still succeeded; the rollout undo completed and the
+services table is now back to v1.
+
+The `Clear log` button in the top-right of the activity section empties
+the in-memory event ring buffer (server-side) and pushes a single
+confirmation event so you can reset the feed between demo runs
+without restarting the pod.
+
 ## What's in here
 
 | Path | What it is |
@@ -37,7 +121,8 @@ bash scripts/deploy-missing.sh
 | `policy/` | OPA policy + policy-mcp wrapper (Node.js) |
 | `mcp-servers/_base/` | Shared Python base image (FROM shim-base:dev) used by all 8 MCP shims |
 | `mcp-servers/<shim>/` | One Python MCP shim per backend (prometheus, loki, tempo, alertmanager, argocd, git, slack, policy-mcp-shim) |
-| `scenarios/` | `regression/inject.sh` (Scenario A), `db-failure/inject.sh` (Scenario B) |
+| `scenarios/` | `regression/inject.sh` (Scenario A), `db-failure/inject.sh` (Scenario B) — legacy CLI inject scripts; the `apps/demo-control` UI replaces them for browser use |
+| `apps/demo-control/` | In-cluster Node.js UI at http://localhost:15000 — visual inject + agent fix loop. See [Visual demo](#visual-demo) |
 | `tests/` | ajv schema tests, OPA sync, YAML lint |
 | `scripts/` | bootstrap (`poc-up.sh`), UI helper (`open-ui.ps1`), Dashboard token (`get-dashboard-token.ps1`), recovery (`deploy-missing.sh`) |
 | `Makefile` | Single-command orchestration (incl. `archify-*` targets) |
