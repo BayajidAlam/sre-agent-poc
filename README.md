@@ -5,9 +5,9 @@ on [kagent](https://github.com/kagent-dev/kagent), gated by OPA, with read-only
 observability on Prometheus + Loki + Tempo. UI-driven by a single click in
 `apps/demo-control` (http://localhost:15000).
 
-![architecture](docs/images/sre-agent-multi-agent-incident-response-on-kagent-ui-driven.png)
-
-![demo-control UI after auto-fix](docs/images/dashboard.png)
+See:
+- [Runtime architecture diagram](docs/images/sre-agent-multi-agent-incident-response-on-kagent-ui-driven.png) — auto-rendered from [`docs/archify/sre-agent.architecture.json`](docs/archify/sre-agent.architecture.json) via `make archify-sre-agent`
+- [Worked example screenshot](docs/images/dashboard.png) — the demo-control UI after one click of "Inject + Auto-fix: payment v2"
 
 ---
 
