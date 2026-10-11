@@ -17,14 +17,14 @@
   </header>
 
   <section class="actions">
-    <button id="btn-inject-regression" class="btn btn-warn" title="Roll payment out as v2 with slow latency and 50% errors">
-      Inject: payment v2 (slow + 50% errors)
+    <button id="btn-inject-regression" class="btn btn-warn" title="Roll payment out as v2 with slow latency and 50% errors, then let the agents auto-fix it back to v1">
+      Inject + Auto-fix: payment v2 (slow + 50% errors)
     </button>
-    <button id="btn-inject-db" class="btn btn-warn" title="Apply NetworkPolicy that breaks egress to postgres/redis">
-      Inject: DB egress block
+    <button id="btn-inject-db" class="btn btn-warn" title="Apply NetworkPolicy that breaks egress to postgres/redis, then let the agents try to fix it (policy is expected to DENY)">
+      Inject + Auto-fix: DB egress block
     </button>
-    <button id="btn-fix" class="btn btn-primary" title="POST a synthetic incident to rca-agent via A2A">
-      Trigger Agent Fix
+    <button id="btn-fix" class="btn btn-primary" title="Re-run the agent fix for the current degraded service (no inject)">
+      Trigger Agent Fix (no inject)
     </button>
     <button id="btn-reset" class="btn btn-ghost" title="Roll all services back to v1 and delete the NetworkPolicy">
       Reset all to v1
@@ -52,7 +52,10 @@
   </section>
 
   <section>
-    <h2>Agent activity</h2>
+    <div class="section-header">
+      <h2>Agent activity</h2>
+      <button id="btn-clear-logs" class="btn btn-tiny btn-ghost" title="Empty the in-memory event ring buffer (server-side)">Clear log</button>
+    </div>
     <div class="task-summary" id="task-summary">No agent task in flight.</div>
     <ol id="events" class="events"></ol>
   </section>

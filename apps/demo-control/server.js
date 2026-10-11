@@ -219,80 +219,224 @@ function summarizeAgentLine(agent, line) {
 }
 
 // --- A2A trigger -------------------------------------------------------------
-async function triggerAgentFix(service) {
-  const incidentId = `ui-${Date.now()}`;
-  const now = new Date().toISOString();
-  const payload = {
+// kagent 0.7 rejects A2A peer refs that form cycles (rca-agent ↔
+// remediator-agent). The pipeline is therefore driven by the caller: we POST
+// the IncidentContext to rca-agent, harvest the RCAFinding, then POST that
+// RCAFinding as the user message to remediator-agent. remediator-agent
+// builds the RemediationAction, evaluates policy-mcp, and (on allow) writes
+// to the cluster.
+function buildA2APayload(id, text) {
+  return {
     jsonrpc: '2.0',
-    id: incidentId,
+    id,
     method: 'message/send',
     params: {
       message: {
         role: 'user',
-        parts: [{
-          kind: 'text',
-          text: JSON.stringify({
-            incident_id: incidentId,
-            service,
-            severity: 'error',
-            window_start: now,
-            window_end: now,
-          }),
-        }],
+        parts: [{ kind: 'text', text }],
       },
     },
   };
-  const url = `${KAGENT_CONTROLLER_URL}/api/a2a/${KAGENT_AGENT_NS}/rca-agent/`;
-  pushEvent('info', 'user', `triggered agent fix for service=${service} (incident=${incidentId})`);
-  setTask('running', 'fix', `investigating ${service}`);
-  // Use Node's built-in fetch (Node 18+)
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const text = await resp.text();
-  let body;
-  try { body = JSON.parse(text); } catch { body = { raw: text }; }
-  // Walk the A2A history and find tool calls + final responses
+}
+
+function a2aUrl(agentName) {
+  return `${KAGENT_CONTROLLER_URL}/api/a2a/${KAGENT_AGENT_NS}/${agentName}/`;
+}
+
+function summarizeHistory(body, agentLabel) {
   const history = body?.result?.history || [];
-  let foundPolicy = null;
   for (const msg of history) {
     for (const part of (msg.parts || [])) {
       if (part.kind === 'data' && part.metadata?.kagent_type === 'function_call') {
         const d = part.data;
-        if (d?.name) pushEvent('info', 'rca-agent', `tool call: ${d.name}(${JSON.stringify(d.args).slice(0, 80)})`);
+        if (d?.name) pushEvent('info', agentLabel, `tool call: ${d.name}(${JSON.stringify(d.args).slice(0, 80)})`);
       }
       if (part.kind === 'data' && part.metadata?.kagent_type === 'function_response') {
         const d = part.data;
         if (d?.name && d?.response?.result?.isError) {
-          pushEvent('warn', 'rca-agent', `tool ${d.name} returned error: ${(d.response.result.content?.[0]?.text || '').slice(0, 120)}`);
+          pushEvent('warn', agentLabel, `tool ${d.name} returned error: ${(d.response.result.content?.[0]?.text || '').slice(0, 120)}`);
         }
       }
     }
   }
-  // The final artifact should be the RemediationAction emitted by remediator-agent
-  const artifacts = body?.result?.artifacts || [];
-  let remediation = null;
-  for (const a of artifacts) {
+}
+
+// Balanced-brace matcher: find the substring that starts at index `start`
+// and ends at the matching closing brace, respecting nested objects/arrays
+// and string literals. Returns the substring or null.
+function extractBalancedJson(text, start) {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (escape) { escape = false; continue; }
+    if (inString) {
+      if (c === '\\') { escape = true; continue; }
+      if (c === '"') { inString = false; }
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function findRcaFinding(body) {
+  // The final assistant message is typically the last history entry OR a text
+  // artifact. It must contain an object with probable_cause + proposed_action.
+  const candidates = [];
+  for (const a of (body?.result?.artifacts || [])) {
     for (const p of (a.parts || [])) {
-      if (p.kind === 'text') {
+      if (p.kind === 'text' && p.text) candidates.push(p.text);
+    }
+  }
+  for (const m of (body?.result?.history || [])) {
+    for (const p of (m.parts || [])) {
+      if (p.kind === 'text' && p.text && m.role === 'agent') candidates.push(p.text);
+    }
+  }
+  for (const text of candidates) {
+    // 1) Try parsing the whole text as a single JSON object.
+    try {
+      const j = JSON.parse(text);
+      if (j.probable_cause && j.proposed_action) return j;
+    } catch {}
+    // 2) Search for any object that contains "probable_cause" and use a
+    //    balanced-brace matcher so we correctly capture nested objects
+    //    (evidence[], params{}, etc.) without truncating at the first }.
+    let from = 0;
+    while (true) {
+      const idx = text.indexOf('"probable_cause"', from);
+      if (idx === -1) break;
+      // Walk backwards to the opening { of this object.
+      let braceStart = -1;
+      for (let i = idx; i >= 0; i--) {
+        if (text[i] === '{') { braceStart = i; break; }
+        if (text[i] === '}' || text[i] === ']') break; // hit a closer first; not our object
+      }
+      if (braceStart === -1) { from = idx + 1; continue; }
+      const slice = extractBalancedJson(text, braceStart);
+      from = idx + 1;
+      if (!slice) continue;
+      try {
+        const j = JSON.parse(slice);
+        if (j.probable_cause && j.proposed_action) return j;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function findRemediationAction(body) {
+  for (const a of (body?.result?.artifacts || [])) {
+    for (const p of (a.parts || [])) {
+      if (p.kind === 'text' && p.text) {
         try {
           const j = JSON.parse(p.text);
-          if (j.policy_decision || j.tool || j.op) {
-            remediation = j;
-          }
+          if (j.policy_decision && (j.tool || j.op)) return j;
         } catch {}
+        // Balanced-brace search for an object containing "policy_decision".
+        let from = 0;
+        while (true) {
+          const idx = p.text.indexOf('"policy_decision"', from);
+          if (idx === -1) break;
+          let braceStart = -1;
+          for (let i = idx; i >= 0; i--) {
+            if (p.text[i] === '{') { braceStart = i; break; }
+            if (p.text[i] === '}' || p.text[i] === ']') break;
+          }
+          from = idx + 1;
+          if (braceStart === -1) continue;
+          const slice = extractBalancedJson(p.text, braceStart);
+          if (!slice) continue;
+          try {
+            const j = JSON.parse(slice);
+            if (j.policy_decision && (j.tool || j.op)) return j;
+          } catch {}
+        }
       }
     }
   }
+  return null;
+}
+
+async function postA2A(agentName, id, userText) {
+  const url = a2aUrl(agentName);
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildA2APayload(id, userText)),
+  });
+  const text = await resp.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = { raw: text }; }
+  return { body, text, rawSize: text.length };
+}
+
+async function triggerAgentFix(service) {
+  const incidentId = `ui-${Date.now()}`;
+  const now = new Date().toISOString();
+  const incident = {
+    incident_id: incidentId,
+    service,
+    severity: 'error',
+    window_start: now,
+    window_end: now,
+  };
+  pushEvent('info', 'user', `triggered agent fix for service=${service} (incident=${incidentId})`);
+  setTask('running', 'fix', `investigating ${service}`);
+
+  // ---- Step 1: rca-agent produces an RCAFinding ----------------------------
+  pushEvent('info', 'rca-agent', `dispatching IncidentContext to rca-agent`);
+  let rcaResp;
+  try {
+    rcaResp = await postA2A('rca-agent', incidentId, JSON.stringify(incident));
+  } catch (e) {
+    pushEvent('err', 'system', `rca-agent call failed: ${e.message}`);
+    setTask('failed', 'fix', `rca-agent unreachable: ${e.message}`);
+    return { incidentId };
+  }
+  summarizeHistory(rcaResp.body, 'rca-agent');
+  const rcaFinding = findRcaFinding(rcaResp.body);
+  if (!rcaFinding) {
+    pushEvent('warn', 'rca-agent', `no RCAFinding parsed from rca-agent response (raw=${rcaResp.rawSize}b)`);
+    // Capture any plain text the agent emitted so the user can see what it said.
+    for (const a of (rcaResp.body?.result?.artifacts || [])) {
+      for (const p of (a.parts || [])) {
+        if (p.kind === 'text' && p.text) {
+          pushEvent('info', 'rca-agent', `final text: ${p.text.replace(/\n/g, ' ').slice(0, 200)}`);
+        }
+      }
+    }
+    setTask('completed', 'fix', 'rca-agent finished (no structured RCAFinding)');
+    return { incidentId, body: rcaResp.body };
+  }
+  pushEvent('ok', 'rca-agent', `RCAFinding: ${rcaFinding.probable_cause} → ${rcaFinding.proposed_action?.tool}.${rcaFinding.proposed_action?.op} ${rcaFinding.proposed_action?.target_resource}`);
+
+  // ---- Step 2: remediator-agent takes the RCAFinding -----------------------
+  pushEvent('info', 'remediator-agent', `dispatching RCAFinding to remediator-agent`);
+  let remResp;
+  try {
+    remResp = await postA2A('remediator-agent', `${incidentId}-rem`, JSON.stringify(rcaFinding));
+  } catch (e) {
+    pushEvent('err', 'system', `remediator-agent call failed: ${e.message}`);
+    setTask('failed', 'fix', `remediator-agent unreachable: ${e.message}`);
+    return { incidentId };
+  }
+  summarizeHistory(remResp.body, 'remediator-agent');
+  const remediation = findRemediationAction(remResp.body);
   if (remediation) {
     const allow = remediation.policy_decision?.allow;
     const tool = remediation.tool;
     const op = remediation.op;
     const tgt = remediation.target_resource;
     if (allow === true) {
-      pushEvent('ok', 'remediator-agent', `policy ALLOW — executing ${tool}.${op} on ${tgt}`);
+      pushEvent('ok', 'remediator-agent', `policy ALLOW — executed ${tool}.${op} on ${tgt}`);
       setTask('completed', 'fix', `remediation applied: ${tool}.${op} ${tgt}`);
     } else if (allow === false) {
       const reason = remediation.policy_decision?.reason || 'denied';
@@ -300,45 +444,20 @@ async function triggerAgentFix(service) {
       setTask('completed', 'fix', `policy denied: ${reason}`);
     } else {
       pushEvent('info', 'remediator-agent', `remediation plan: ${tool}.${op} ${tgt} (risk=${remediation.risk}, conf=${remediation.confidence})`);
+      setTask('completed', 'fix', `${tool}.${op} ${tgt}`);
     }
   } else {
-    // Fall back: scan ALL artifact text parts for any structured JSON
-    // (policy_decision, tool, op) and for plain text reasoning.
-    let plainTextSnippets = [];
-    for (const a of artifacts) {
+    pushEvent('warn', 'remediator-agent', `no structured RemediationAction in remediator response (raw=${remResp.rawSize}b)`);
+    for (const a of (remResp.body?.result?.artifacts || [])) {
       for (const p of (a.parts || [])) {
         if (p.kind === 'text' && p.text) {
-          // try to extract any object that looks like a remediation
-          const m = p.text.match(/\{[^{}]*"tool"[^{}]*\}/);
-          if (m) {
-            try {
-              const j = JSON.parse(m[0]);
-              if (j.tool || j.op) {
-                pushEvent('info', 'remediator-agent', `remediation plan (from text): ${j.tool}.${j.op} ${j.target_resource || ''}`);
-                if (j.policy_decision?.allow === true) {
-                  pushEvent('ok', 'remediator-agent', `policy ALLOW — ${j.tool}.${j.op}`);
-                } else if (j.policy_decision?.allow === false) {
-                  pushEvent('warn', 'remediator-agent', `policy DENY (${j.policy_decision.reason || 'denied'})`);
-                }
-                setTask('completed', 'fix', `${j.tool}.${j.op} ${j.target_resource || ''}`);
-                return { incidentId, body };
-              }
-            } catch {}
-          }
-          // capture the first 200 chars of any meaningful text reply
-          if (p.text.length > 20 && plainTextSnippets.length < 2) {
-            plainTextSnippets.push(p.text.slice(0, 240));
-          }
+          pushEvent('info', 'remediator-agent', `final text: ${p.text.replace(/\n/g, ' ').slice(0, 200)}`);
         }
       }
     }
-    pushEvent('warn', 'system', `agent run finished; no structured RemediationAction in artifacts (raw=${text.length}b)`);
-    for (const s of plainTextSnippets) {
-      pushEvent('info', 'rca-agent', `final text: ${s.replace(/\n/g, ' ').slice(0, 200)}`);
-    }
-    setTask('completed', 'fix', 'agent finished (see events)');
+    setTask('completed', 'fix', 'remediator-agent finished (see events)');
   }
-  return { incidentId, body };
+  return { incidentId, rcaFinding, remediation };
 }
 
 // --- HTTP routes -------------------------------------------------------------
@@ -364,12 +483,18 @@ app.get('/api/state', async (_req, res) => {
   }
 });
 
-app.post('/api/inject/regression', async (_req, res) => {
+app.post('/api/inject/regression', async (req, res) => {
   try {
     pushEvent('info', 'user', 'injected: payment v2 (slow + 50% errors)');
     setTask('idle', null, null);
     await patchServiceEnv('payment', { APP_VERSION: 'v2', LATENCY_PROFILE: 'slow', ERROR_RATE: '0.5' });
     pushEvent('warn', 'system', 'payment is now v2 — error rate 50%, latency ~2s');
+    // Optionally chain into the agent fix so a single click runs the full loop:
+    //   inject → rca-agent → remediator-agent → policy ALLOW → rollout undo → v1
+    if (String(req.query.fix) === '1') {
+      // Don't block the HTTP response — kick off the fix in the background.
+      triggerAgentFix('payment').catch(e => pushEvent('err', 'system', `auto-fix after inject failed: ${e.message}`));
+    }
     res.json({ ok: true });
   } catch (e) {
     pushEvent('err', 'system', `inject regression failed: ${e.message}`);
@@ -377,12 +502,18 @@ app.post('/api/inject/regression', async (_req, res) => {
   }
 });
 
-app.post('/api/inject/db-failure', async (_req, res) => {
+app.post('/api/inject/db-failure', async (req, res) => {
   try {
     pushEvent('info', 'user', 'injected: NetworkPolicy block-db (breaks postgres+redis egress)');
     setTask('idle', null, null);
     await applyNetworkPolicy();
     pushEvent('warn', 'system', 'NetworkPolicy block-db applied — apps cannot reach postgres/redis');
+    // Same auto-fix chain. Expectation: policy-mcp-shim returns allow=false
+    // (deleting NetworkPolicy is high-risk per policy/opa.rego) so the agents
+    // diagnose but do NOT write.
+    if (String(req.query.fix) === '1') {
+      triggerAgentFix('payment').catch(e => pushEvent('err', 'system', `auto-fix after inject failed: ${e.message}`));
+    }
     res.json({ ok: true });
   } catch (e) {
     pushEvent('err', 'system', `inject db-failure failed: ${e.message}`);
@@ -414,6 +545,17 @@ app.post('/api/fix', async (req, res) => {
     setTask('failed', 'fix', e.message);
     res.status(500).json({ error: String(e.message || e) });
   }
+});
+
+app.post('/api/clear', (_req, res) => {
+  // Empty the in-memory event ring buffer (does not touch the cluster).
+  // We then push a single marker event so the user has visual confirmation
+  // that the clear happened.
+  const count = events.length;
+  events.length = 0;
+  pushEvent('info', 'user', `cleared activity log (removed ${count} previous event${count === 1 ? '' : 's'})`);
+  setTask('idle', null, null);
+  res.json({ ok: true, cleared: count });
 });
 
 // --- Boot --------------------------------------------------------------------

@@ -25,16 +25,22 @@ function pillForService(s) {
 }
 
 function pillForTask(t) {
-  if (!t || t.status === 'idle') return '<span class="pill pill-grey">task: idle</span>';
-  if (t.status === 'running') return '<span class="pill pill-blue">task: running</span>';
-  if (t.status === 'completed') return '<span class="pill pill-green">task: done</span>';
-  if (t.status === 'failed') return '<span class="pill pill-red">task: failed</span>';
-  return `<span class="pill">task: ${t.status}</span>`;
+  if (!t || t.status === 'idle') return { cls: 'pill-grey', text: 'task: idle', title: 'current agent task' };
+  if (t.status === 'running') return { cls: 'pill-blue', text: 'task: running', title: 'current agent task' };
+  if (t.status === 'completed') return { cls: 'pill-green', text: 'task: done', title: 'current agent task' };
+  if (t.status === 'failed') return { cls: 'pill-red', text: 'task: failed', title: 'current agent task' };
+  return { cls: '', text: `task: ${t.status}`, title: 'current agent task' };
 }
 
 function pillForNetpolicy(np) {
-  if (np) return '<span class="pill pill-red" title="NetworkPolicy block-db is active — apps cannot reach postgres/redis">np: block-db active</span>';
-  return '<span class="pill pill-grey" title="no NetworkPolicy block-db">np: clear</span>';
+  if (np) return { cls: 'pill-red', text: 'np: block-db active', title: 'NetworkPolicy block-db is active — apps cannot reach postgres/redis' };
+  return { cls: 'pill-grey', text: 'np: clear', title: 'no NetworkPolicy block-db' };
+}
+
+function applyPill(el, p) {
+  el.className = 'pill ' + p.cls;
+  el.textContent = p.text;
+  el.title = p.title || '';
 }
 
 function renderServices() {
@@ -62,7 +68,8 @@ function renderServices() {
 function renderEvents() {
   const list = $('events');
   const seen = new Set();
-  list.innerHTML = state.events.map(e => {
+  // Render newest events on top (reverse chronological order).
+  list.innerHTML = state.events.slice().reverse().map(e => {
     const key = e.t + e.agent + e.message;
     if (seen.has(key)) return '';
     seen.add(key);
@@ -74,8 +81,8 @@ function renderEvents() {
       <span class="msg">${escapeHtml(e.message)}</span>
     </li>`;
   }).join('');
-  // scroll to bottom
-  list.scrollTop = list.scrollHeight;
+  // No auto-scroll — newest is already at the top.
+  list.scrollTop = 0;
 }
 
 function escapeHtml(s) {
@@ -98,8 +105,8 @@ function renderTaskSummary() {
 }
 
 function renderHeader() {
-  $('netpolicy-pill').outerHTML = pillForNetpolicy(state.network_policy_block_db);
-  $('task-pill').outerHTML = pillForTask(state.task);
+  applyPill($('netpolicy-pill'), pillForNetpolicy(state.network_policy_block_db));
+  applyPill($('task-pill'), pillForTask(state.task));
   $('last-poll').textContent = 'last poll: ' + fmtTime(new Date().toISOString());
 }
 
@@ -134,14 +141,23 @@ async function post(path) {
     console.error('POST ' + path + ' threw', e);
     alert('POST ' + path + ' threw: ' + e.message);
   }
-  setTimeout(poll, 500);
+  // Poll fast for the next ~10s so the user sees the agent work live, then
+  // fall back to the regular 2s cadence.
+  poll();
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    poll();
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  $('btn-inject-regression').onclick = () => post('/api/inject/regression');
-  $('btn-inject-db').onclick = () => post('/api/inject/db-failure');
-  $('btn-fix').onclick = () => post('/api/fix');
-  $('btn-reset').onclick = () => post('/api/reset');
+  // Inject buttons chain into the agent fix automatically; the "Trigger Agent
+  // Fix (no inject)" button is the manual override.
+  $('btn-inject-regression').onclick = () => post('/api/inject/regression?fix=1');
+  $('btn-inject-db').onclick        = () => post('/api/inject/db-failure?fix=1');
+  $('btn-fix').onclick               = () => post('/api/fix');
+  $('btn-reset').onclick             = () => post('/api/reset');
+  $('btn-clear-logs').onclick        = () => post('/api/clear');
   poll();
   setInterval(poll, POLL_MS);
 });

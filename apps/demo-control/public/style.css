@@ -44,6 +44,9 @@ header h1 { margin: 0; font-size: 22px; font-weight: 600; }
 
 section { margin-bottom: 24px; }
 section h2 { font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.section-header h2 { margin: 0; }
+.btn-tiny { padding: 4px 10px; font-size: 12px; }
 
 /* --- buttons --- */
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
