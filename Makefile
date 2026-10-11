@@ -177,6 +177,26 @@ slack-mcp:                         ## Deploy Slack notifier
 	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/mcp/slack-mcp.yaml
 
 # -----------------------------------------------------------------------------
+#  UI NodePort services + dashboard (host:13000/13100/13200/19090/19093/19443)
+#  Loki and Tempo don't expose an HTML UI on 3100/3200 — they expose metrics
+#  ports, which Grafana queries. The legacy 3100/3200/9090 host forwards are
+#  in kind-config.yaml but blocked by wslrelay; use the high-port range
+#  (13000/13100/13200/19090/19093) or click through from Grafana instead.
+# -----------------------------------------------------------------------------
+.PHONY: ui-nodeports
+ui-nodeports:                      ## Expose Grafana/Prom/AM/Loki/Tempo on the high NodePorts
+	@$(KUBECTL) apply -f manifests/ui-nodeports.yaml
+
+.PHONY: k8s-dashboard
+k8s-dashboard:                     ## Install the Kubernetes Dashboard + NodePort + admin user
+	@$(KUBECTL) apply -f manifests/dashboard/recommended.yaml
+	@$(KUBECTL) apply -f manifests/dashboard/admin-user.yaml
+
+.PHONY: port-forwards
+port-forwards:                     ## Start host-side port-forwards for kagent UI (18080) + k8s dashboard (18443)
+	@bash scripts/port-forwards.sh
+
+# -----------------------------------------------------------------------------
 #  Scenarios
 # -----------------------------------------------------------------------------
 .PHONY: inject

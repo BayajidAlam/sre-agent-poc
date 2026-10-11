@@ -1,7 +1,16 @@
 # ui-nodeports.yaml — UI NodePort services on unused high host ports.
 # See infra/kind-config.yaml for the host:containerPort forwards.
 # These overlay the existing ClusterIP services from kube-prometheus-stack,
-# Loki chart, Tempo chart — they do NOT replace them.
+# Loki chart, Tempo chart, kagent, and the Kubernetes dashboard — they do
+# NOT replace them.
+#
+# Host -> container (NodePort) mapping:
+#   13000 -> 30010  Grafana
+#   19090 -> 30011  Prometheus
+#   19093 -> 30012  Alertmanager
+#   13100 -> 30013  Loki
+#   13200 -> 30014  Tempo
+#   19443 -> 30020  Kubernetes Dashboard
 ---
 apiVersion: v1
 kind: Service
@@ -94,3 +103,28 @@ spec:
       port: 3200
       targetPort: 3200   # tempo http_listen_port
       nodePort: 30014
+---
+# kagent chat UI. Originally ClusterIP-only; exposed here on NodePort 30080
+# so it can be reached from the host. We don't have a hostPort forward for
+# 30080 in infra/kind-config.yaml, so users hit it via `kubectl port-forward`
+# OR via the legacy 0.0.0.0:3000 if you re-bind. Easier path: run
+#   kubectl port-forward svc/ui-kagent -n kagent 18080:8080
+# and open http://localhost:18080.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-kagent
+  namespace: kagent
+  labels:
+    app.kubernetes.io/name: ui-kagent
+    app.kubernetes.io/component: ui-nodeport
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: kagent
+    app.kubernetes.io/component: ui
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080
