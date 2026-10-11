@@ -139,8 +139,17 @@ policy-mcp:                        ## Deploy OPA + policy-mcp
 agents:                            ## Deploy MCP servers + 3 agents
 	@$(KUBECTL) create namespace $(NAMESPACE_AGENTS_READ) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/mcp/
+	# kagent 0.7.2 looks up ModelConfig in the AGENT'S namespace, not the
+	# controller's `kagent` namespace. The ModelConfig in manifests/modelconfig/
+	# is in `kagent`; we need a copy in `agent-read` so the 3 agents reconcile.
+	# The secret is also in `kagent`; copy it too.
+	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/modelconfig/kagent-gemini-secret.yaml
+	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/modelconfig/gemini-2-flash-lite.agent-read.yaml
 	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/agents/
-	@$(KUBECTL) apply -n $(NAMESPACE_AGENTS_READ) -f manifests/webhook/
+	# Wire alertmanager -> rca-agent webhook via an AlertmanagerConfig CR
+	# in the observability namespace (picked up by kube-prom-stack's
+	# prometheus-operator since alertmanagerConfigSelector is empty).
+	@$(KUBECTL) apply -n $(NAMESPACE_OBS) -f manifests/webhook/
 
 .PHONY: mcp-shims
 mcp-shims: shim-base               ## Build + load + deploy the 8 MCP shims

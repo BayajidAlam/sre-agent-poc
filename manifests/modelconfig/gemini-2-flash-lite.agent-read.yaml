@@ -1,0 +1,12 @@
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: gemini-2-flash-lite
+  namespace: agent-read
+  labels:
+    sre-poc/component: llm-provider
+spec:
+  provider: Gemini
+  model: gemini-3.5-flash-lite
+  apiKeySecret: kagent-gemini
+  apiKeySecretKey: GOOGLE_API_KEY

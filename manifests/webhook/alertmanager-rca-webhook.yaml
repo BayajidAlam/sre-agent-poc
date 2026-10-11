@@ -1,0 +1,32 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: rca-agent-webhook
+  namespace: observability
+  labels:
+    alertmanagerConfig: main
+spec:
+  receivers:
+    - name: rca-agent
+      webhookConfigs:
+        - url: http://rca-agent.agent-read.svc.cluster.local:8080/webhook/alertmanager
+          sendResolved: true
+          maxAlerts: 50
+  route:
+    receiver: rca-agent
+    # Object-style matchers (the v1alpha1 CRD rejects string-style matchers
+    # at admission). This is a top-level match, so any alert in one of
+    # the listed namespaces routes to the rca-agent webhook. Other
+    # namespaces fall through to the chart-default "null" receiver
+    # (kube-system noise, kube-prom self-monitoring, etc).
+    matchers:
+      - name: namespace
+        value: "^(apps-demo|kube-system|agent-read|agent-write|observability|kagent)$"
+        matchType: "=~"
+    groupBy:
+      - namespace
+      - alertname
+    groupWait: 10s
+    groupInterval: 30s
+    repeatInterval: 5m
+    continue: false
