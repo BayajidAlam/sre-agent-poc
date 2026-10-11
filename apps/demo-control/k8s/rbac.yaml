@@ -1,0 +1,37 @@
+# demo-control RBAC — namespace-scoped to apps-demo, with read + write on
+# deployments + networkpolicies. No cluster-wide privileges.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-control
+  namespace: apps-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: demo-control
+  namespace: apps-demo
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: demo-control
+  namespace: apps-demo
+subjects:
+  - kind: ServiceAccount
+    name: demo-control
+    namespace: apps-demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: demo-control

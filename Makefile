@@ -126,6 +126,19 @@ demo-stack:                        ## Deploy demo-service + Postgres + Redis
 	@$(KUBECTL) apply -n $(NAMESPACE_DEMO) -f apps/demo-service/k8s/
 
 # -----------------------------------------------------------------------------
+#  Demo control UI — visual inject + agent-fix
+#  Build the image, load it into kind, deploy into apps-demo with namespace-
+#  scoped RBAC. Reachable via `make port-forwards` -> http://localhost:15000.
+# -----------------------------------------------------------------------------
+.PHONY: demo-control
+demo-control:                      ## Build + load + deploy the demo control UI
+	@docker build -t demo-control:dev apps/demo-control
+	@kind load docker-image demo-control:dev --name $(CLUSTER_NAME)
+	@$(KUBECTL) apply -n $(NAMESPACE_DEMO) -f apps/demo-control/k8s/rbac.yaml
+	@$(KUBECTL) apply -n $(NAMESPACE_DEMO) -f apps/demo-control/k8s/deployment.yaml
+	@echo ">>> demo-control deployed. Try: make port-forwards  (then open http://localhost:15000)"
+
+# -----------------------------------------------------------------------------
 #  Policy + MCPs
 # -----------------------------------------------------------------------------
 .PHONY: policy-mcp

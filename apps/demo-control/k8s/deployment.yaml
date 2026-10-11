@@ -1,0 +1,57 @@
+# demo-control Deployment — 1 replica, apps-demo namespace, uses demo-control SA.
+# Uses shim-base:dev (which has kubectl installed) plus demo-control source on top,
+# so we don't need a separate image build for the kubectl binary.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-control
+  namespace: apps-demo
+  labels:
+    app: demo-control
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-control
+  template:
+    metadata:
+      labels:
+        app: demo-control
+    spec:
+      serviceAccountName: demo-control
+      containers:
+        - name: demo-control
+          image: demo-control:dev
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: NS, value: "apps-demo" }
+            - { name: KAGENT_NS, value: "kagent" }
+            - { name: KAGENT_AGENT_NS, value: "agent-read" }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8080 }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-control
+  namespace: apps-demo
+  labels:
+    app: demo-control
+spec:
+  selector: { app: demo-control }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SRE POC — Demo Control</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>SRE POC <span class="muted">— Demo Control</span></h1>
+    <div class="header-right">
+      <span id="netpolicy-pill" class="pill pill-grey" title="NetworkPolicy block-db in apps-demo">np: ?</span>
+      <span id="task-pill" class="pill pill-grey" title="current agent task">task: idle</span>
+      <span class="muted small" id="last-poll">—</span>
+    </div>
+  </header>
+
+  <section class="actions">
+    <button id="btn-inject-regression" class="btn btn-warn" title="Roll payment out as v2 with slow latency and 50% errors">
+      Inject: payment v2 (slow + 50% errors)
+    </button>
+    <button id="btn-inject-db" class="btn btn-warn" title="Apply NetworkPolicy that breaks egress to postgres/redis">
+      Inject: DB egress block
+    </button>
+    <button id="btn-fix" class="btn btn-primary" title="POST a synthetic incident to rca-agent via A2A">
+      Trigger Agent Fix
+    </button>
+    <button id="btn-reset" class="btn btn-ghost" title="Roll all services back to v1 and delete the NetworkPolicy">
+      Reset all to v1
+    </button>
+  </section>
+
+  <section>
+    <h2>Services (live)</h2>
+    <table id="services">
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Status</th>
+          <th>Version</th>
+          <th>Profile</th>
+          <th>Err rate</th>
+          <th>Replicas</th>
+          <th>Image</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="7" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Agent activity</h2>
+    <div class="task-summary" id="task-summary">No agent task in flight.</div>
+    <ol id="events" class="events"></ol>
+  </section>
+
+  <footer>
+    <p class="muted small">
+      Live polling every 2s. Injects mirror scenarios/regression/inject.sh and scenarios/db-failure/inject.sh.
+      Agent fix posts an IncidentContext to <code>kagent-controller.kagent:8083/api/a2a/agent-read/rca-agent/</code>.
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
