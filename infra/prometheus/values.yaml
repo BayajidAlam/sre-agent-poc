@@ -10,7 +10,7 @@ prometheus:
     additionalScrapeConfigs:
       - job_name: 'otel-collector'
         static_configs:
-          - targets: ['otel-collector.observability:8889']
+          - targets: ['otel-collector-opentelemetry-collector.observability:8889']
 
 alertmanager:
   alertmanagerSpec:

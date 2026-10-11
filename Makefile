@@ -99,6 +99,7 @@ obs-stack:                         ## Install Prometheus + Loki + Tempo + OTel
 	@$(KUBECTL) create namespace $(NAMESPACE_OBS) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 	@helm repo add grafana https://grafana.github.io/helm-charts
+	@helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
 	@helm repo update
 	@helm upgrade --install kube-prom grafana/kube-prometheus-stack \
 		-n $(NAMESPACE_OBS) -f infra/prometheus/values.yaml --wait
@@ -106,8 +107,14 @@ obs-stack:                         ## Install Prometheus + Loki + Tempo + OTel
 		-n $(NAMESPACE_OBS) -f infra/loki/values.yaml --wait
 	@helm upgrade --install tempo grafana/tempo \
 		-n $(NAMESPACE_OBS) -f infra/tempo/values.yaml --wait
-	@helm upgrade --install otel-collector grafana/opentelemetry-collector \
+	@helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
 		-n $(NAMESPACE_OBS) -f infra/otelcollector/values.yaml --wait
+	# Promtail ships container logs to Loki. The Loki 7.x chart no longer
+	# bundles promtail as a subchart, so we install it separately. Without
+	# this, the SRE POC overview dashboard's "Recent log errors" panel has
+	# no data — Loki is empty.
+	@helm upgrade --install promtail grafana/promtail \
+		-n $(NAMESPACE_OBS) -f infra/promtail/values.yaml --wait
 	@$(KUBECTL) apply -n $(NAMESPACE_OBS) -f infra/grafana/dashboards/
 
 # -----------------------------------------------------------------------------

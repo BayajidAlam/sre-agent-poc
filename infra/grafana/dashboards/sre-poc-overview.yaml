@@ -4,6 +4,19 @@ metadata:
   name: grafana-dashboard-sre-poc
   namespace: observability
   labels: { grafana_dashboard: "1" }
+# LogQL notes for the "Recent log errors" panel:
+# - Loki uses the RE2 regex engine, which does NOT support Perl-style
+#   negative lookahead (`(?!...)`). The previous `|~ "(?i)(?!.*level=info)"`
+#   raised a parse error and the panel returned nothing.
+# - Loki's log-stage pipeline auto-extracts a `detected_level` label
+#   (info|warn|error|debug) on every stream. Negating that label is the
+#   supported way to drop routine info-level noise. Combined with the
+#   error/exception/failed/inject regex, the panel now shows real failures
+#   from the apps-demo, agent-read, and observability namespaces.
+# - All of the JSON below must be valid JSON — no `#` comments inside
+#   the `sre-poc-overview.json` literal or the dashboard sidecar will fail
+#   to parse it (Grafana logs the error and the panel silently shows "No
+#   data"). Put explanations in YAML comments at the top of this file.
 data:
   sre-poc-overview.json: |
     {
@@ -19,7 +32,7 @@ data:
             "name": "service",
             "type": "query",
             "datasource": { "type": "prometheus", "uid": "prometheus" },
-            "query": "label_values(http_server_duration_seconds_bucket, service_name)",
+            "query": "label_values(http_server_duration_milliseconds_bucket, service_name)",
             "refresh": 2,
             "includeAll": true,
             "multi": true
@@ -28,22 +41,22 @@ data:
       },
       "panels": [
         {
-          "title": "Latency p95 (per service)",
+          "title": "Latency p95 (per service, ms)",
           "type": "timeseries",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "targets": [{
-            "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_duration_seconds_bucket{service_name=~\"$service\"}[5m])))",
+            "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_duration_milliseconds_bucket{service_name=~\"$service\"}[5m])))",
             "legendFormat": "{{service_name}} p95"
           }],
-          "fieldConfig": { "defaults": { "unit": "s" } },
+          "fieldConfig": { "defaults": { "unit": "ms" } },
           "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
         },
         {
-          "title": "Request rate (per service)",
+          "title": "Request rate (per service, req/s)",
           "type": "timeseries",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "targets": [{
-            "expr": "sum by (service_name) (rate(http_server_duration_seconds_count{service_name=~\"$service\"}[5m]))",
+            "expr": "sum by (service_name) (rate(http_server_duration_milliseconds_count{service_name=~\"$service\"}[5m]))",
             "legendFormat": "{{service_name}}"
           }],
           "fieldConfig": { "defaults": { "unit": "reqps" } },
@@ -54,18 +67,18 @@ data:
           "type": "timeseries",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "targets": [{
-            "expr": "sum by (service_name) (rate(http_server_duration_seconds_count{service_name=~\"$service\", http_response_status_code=~\"5..\"}[5m])) / clamp_min(sum by (service_name) (rate(http_server_duration_seconds_count{service_name=~\"$service\"}[5m])), 1e-9)",
+            "expr": "sum by (service_name) (rate(http_server_duration_milliseconds_count{service_name=~\"$service\", http_status_code=~\"5..\"}[5m])) / clamp_min(sum by (service_name) (rate(http_server_duration_milliseconds_count{service_name=~\"$service\"}[5m])), 1e-9)",
             "legendFormat": "{{service_name}} 5xx"
           }],
           "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
           "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
         },
         {
-          "title": "Recent log errors",
+          "title": "Recent log errors (multi-namespace)",
           "type": "logs",
           "datasource": { "type": "loki", "uid": "loki" },
           "targets": [{
-            "expr": "{service_name=~\".+\"} |~ \"(?i)(error|exception|failed)\" | line_format \"{{.service_name}}: {{.message}}\"",
+            "expr": "{namespace=~\"apps-demo|agent-read|observability\"} |~ \"(?i)(error|exception|failed|inject)\" | detected_level!~\"info\" | line_format \"{{.app}}: {{.message}}\"",
             "refId": "A"
           }],
           "options": { "showLabels": true, "showTime": true, "sortOrder": "Descending" },

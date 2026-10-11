@@ -1,0 +1,29 @@
+# Promtail ships container logs from every node to Loki.
+# The loki-7.3.0 chart no longer bundles promtail as a subchart (its dependencies
+# are only minio, grafana-agent-operator, rollout_operator), so we install it
+# separately. The Loki chart's earlier `promtail.enabled: true` toggle is dead
+# code on this chart version.
+config:
+  # Port MUST be explicit: the `loki` ClusterIP Service exposes 3100/3100+9095
+  # but not :80, and without :3100 promtail silently falls back to port 80
+  # and the push times out (Loki's own logs are not in the empty result).
+  clients:
+    - url: http://loki.observability.svc.cluster.local:3100/loki/api/v1/push
+  snippets:
+    pipelineStages:
+      # Two log envelope formats exist in this cluster: the `cri` envelope
+      # (containerd native: `{"stream":"...","time":"...","log":"..."}`) for
+      # most pods, and a plain-text fallback for older Docker-style json output
+      # on a few workloads (e.g. the Node.js demo-service in apps-demo, which
+      # the kubelet logs without the full CRI metadata). Each stage only
+      # matches its own envelope; lines that don't match fall through to the
+      # next. Without this multi-stage setup, ~half the cluster's log
+      # streams land in Loki with no series (relabeling still labels the
+      # target, but the pipeline emits 0 entries so Loki drops the empty
+      # batch).
+      - cri: {}
+      - docker: {}
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits:   { cpu: 200m, memory: 256Mi }
