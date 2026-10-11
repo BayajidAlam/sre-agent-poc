@@ -7,11 +7,13 @@ observability on Prometheus + Loki + Tempo. UI-driven by a single click in
 
 ## Architecture
 
-![architecture](docs/images/sre-agent-multi-agent-incident-response-on-kagent-ui-driven.png)
+<img width="5304" height="2796" alt="sre-agent-multi-agent-incident-response-on-kagent-ui-driven" src="https://github.com/user-attachments/assets/aaf088ee-98a4-4ce9-97f3-7b530c121b93" />
+
 
 ## Worked example, one click, full recovery
 
-![demo-control UI after auto-fix](docs/images/dashboard.png)
+<img width="1920" height="1006" alt="dashboard" src="https://github.com/user-attachments/assets/318deef1-a968-474d-92f5-2ae311d51902" />
+
 
 ---
 
