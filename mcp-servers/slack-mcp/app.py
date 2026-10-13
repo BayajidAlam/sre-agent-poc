@@ -32,13 +32,19 @@ async def slack_post_message(channel: str, text: str) -> str:
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
     log.info("slack_post_message channel=%s webhook_set=%s", channel, bool(webhook_url))
 
-    # 1) Always write to the in-cluster recorder (audit/replay).
-    async with httpx.AsyncClient(timeout=5.0) as c:
-        recorder_resp = await c.post(
-            SLACK_URL, json={"channel": channel, "text": text}
-        )
-        recorder_resp.raise_for_status()
-        recorder_body = recorder_resp.text
+    # 1) Best-effort write to the in-cluster recorder (audit/replay). The
+    #    recorder is optional — if it doesn't exist (DNS failure) we log
+    #    a warning and continue, so the real-Slack webhook still fires.
+    recorder_body = ""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as c:
+            recorder_resp = await c.post(
+                SLACK_URL, json={"channel": channel, "text": text}
+            )
+            recorder_resp.raise_for_status()
+            recorder_body = recorder_resp.text
+    except Exception as e:
+        log.warning("slack recorder forward failed (continuing): %s", e)
 
     # 2) Optionally forward to a real Slack incoming webhook (fire-and-forget).
     #    NOTE: Slack incoming webhooks are bound to a single channel at creation
