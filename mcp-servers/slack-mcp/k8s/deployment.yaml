@@ -25,6 +25,11 @@ spec:
           env:
             - name: SLACK_URL
               value: "http://slack-recorder.agent-read.svc.cluster.local:80/chat.postMessage"
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slack-webhook
+                  key: SLACK_WEBHOOK_URL
           livenessProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 5
