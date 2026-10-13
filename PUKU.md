@@ -4,15 +4,18 @@
 > what this repo is, how to run it, where the live state lives, and what
 > to avoid.
 
+**Project name:** Athena — SRE Agent (also referred to as "Athena" in
+conversation; technical identifiers stay as `sre-agent`).
+
 ## What this repo is
 
-A **multi-agent SRE incident-response POC on Kubernetes (kagent)**.
-A cluster of three AI agents (`trace-agent` → `rca-agent` →
-`remediator-agent`) detects, diagnoses, and fixes production incidents
-on a 3-service demo app (`checkout`, `payment`, `inventory`). Every
-write to the cluster is gated by OPA policy. Triggered by a single
-click in the `demo-control` UI or by Alertmanager (optional, not wired
-to metrics today).
+**Athena — SRE Agent**: a multi-agent SRE incident-response POC on
+Kubernetes (kagent). A cluster of three AI agents (`trace-agent` →
+`rca-agent` → `remediator-agent`) detects, diagnoses, and fixes
+production incidents on a 3-service demo app (`checkout`, `payment`,
+`inventory`). Every write to the cluster is gated by OPA policy.
+Triggered by a single click in the `demo-control` UI or by Alertmanager
+(optional, not wired to metrics today).
 
 ## Layout
 
@@ -21,7 +24,8 @@ sre-agent/
 ├── Makefile                   # single entry point — `make help` lists targets
 ├── README.md                  # human-facing project readme
 ├── PUKU.md                    # this file (AI assistant context)
-├── .env                       # GEMINI_API_KEY + SLACK_WEBHOOK + GITHUB_PAT
+├── .env                       # PROVIDER + GEMINI_API_KEY + OPENAI_API_KEY +
+│                              # ANTHROPIC_API_KEY + OLLAMA_HOST + SLACK_WEBHOOK
 ├── apps/
 │   ├── demo-service/          # the 3 microservices (Node.js + Express)
 │   └── demo-control/          # the visual UI that injects + drives the fix
@@ -29,7 +33,8 @@ sre-agent/
 ├── manifests/
 │   ├── agents/                # trace-agent.yaml, rca-agent.yaml, remediator-agent.yaml
 │   ├── dashboard/             # kubernetes-dashboard + admin-user
-│   ├── mcp/                   # RemoteMCPServer CRs (loki/prom/tempo/...)
+│   ├── mcp/                   # RemoteMCPServer CRs (loki/prom/tempo/...) +
+│   │                          # slack-webhook-secret.yaml (SLACK_WEBHOOK_URL)
 │   ├── modelconfig/           # gemini-2-flash-lite + kagent-gemini secret
 │   ├── rbac/                  # OPA's ServiceAccount + role bindings
 │   ├── ui-nodeports.yaml      # high-port NodePorts for grafana/prom/am
@@ -46,10 +51,13 @@ sre-agent/
 
 ```bash
 make poc-up                  # kind cluster + obs stack + demo + agents + OPA
-make demo-control             # visual UI (replaces scenarios/*.sh)
 ./scripts/port-forwards.sh    # host-side port-forwards (run in background)
 powershell -File scripts/get-dashboard-token.ps1   # k8s dashboard token
 ```
+
+Note: there is no separate `make demo-control` target. `poc-up` deploys
+demo-control into the `apps-demo` namespace, and `./scripts/port-forwards.sh`
+binds it to `http://localhost:15000`.
 
 Then open:
 
@@ -107,6 +115,17 @@ Then open:
   verdict. Rules live in `policy/opa.rego`.
 - **Image naming:** `<name>:dev`. Loaded into kind with
   `kind load docker-image`. Pods use `imagePullPolicy: Never`.
+- **demo-control error surfacing:** `postA2A()` in `apps/demo-control/server.js`
+  wraps the A2A client fetch with a 3.5-minute timeout and, on failure,
+  tails the agent pod's logs (`kubectl logs -n agent-read -l app=kagent
+  --since=240s`) to extract the upstream LLM reason — Gemini
+  `503 UNAVAILABLE — high demand`, `429 RESOURCE_EXHAUSTED`, controller
+  timeouts, or any `google.genai.errors.*` line. The reason is attached
+  to the thrown error as `e.upstreamReason` and pushed to the activity
+  log as a dedicated `LLM upstream error:` event. When the user reports
+  `rca-agent call failed: fetch failed` or `a2a-timeout-…`, look at the
+  immediately-following `LLM upstream error:` event for the real cause
+  (rate limit, network blip, bad model name, etc.).
 
 ## Things to NOT do
 
@@ -135,17 +154,24 @@ Then open:
 | Run JSON-schema tests | `make schemas-test` |
 | Re-render archify diagrams | `make archify-sre-agent` |
 | Get a fresh k8s dashboard token | `kubectl --context kind-sre-poc -n kubernetes-dashboard create token admin-user --duration=24h` |
-| Restart demo-control after code change | `docker build -t demo-control:dev apps/demo-control && kind load docker-image demo-control:dev --name sre-poc && kubectl --context kindroll -n apps-demo rollout restart deployment/demo-control` |
+| Restart demo-control after code change | `docker build -t demo-control:dev apps/demo-control && kind load docker-image demo-control:dev --name sre-poc && kubectl --context kind-sre-poc -n apps-demo rollout restart deployment/demo-control` |
 
 ## Cluster is currently running
 
-The cluster was started with `make poc-up` and is currently UP (16+ h
-uptime as of last check). All UIs are reachable. demo-control Pod is
-`1/1 Running` at http://localhost:15000. If a port-forward dies after
-a Deployment restart, free the port and re-run:
+The cluster was started with `make poc-up` and is currently UP. All UIs
+are reachable. demo-control Pod is `1/1 Running` at
+http://localhost:15000. If a port-forward dies after a Deployment
+restart, free the port and re-run:
 
 ```bash
 powershell -Command "Get-NetTCPConnection -LocalPort 15000 -State Listen |
   ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force }"
 kubectl --context kind-sre-poc port-forward -n apps-demo svc/demo-control 15000:80
 ```
+
+Last verified full E2E run: payment injected v2 → rca-agent emitted
+RCAFinding in ~16s (incl. the deploy rollout wait) → remediator-agent got
+policy ALLOW and called `kubectl rollout undo` → payment flipped back to
+v1 in ~28s end-to-end. All three services back to v1 / fast / 0%.
+If the cluster is unreachable after a long idle, check
+`kubectl --context kind-sre-poc get pods -A | grep -v Running` first.

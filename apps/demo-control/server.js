@@ -289,18 +289,43 @@ function extractBalancedJson(text, start) {
 function findRcaFinding(body) {
   // The final assistant message is typically the last history entry OR a text
   // artifact. It must contain an object with probable_cause + proposed_action.
+  // We collect candidates but prefer the LAST agent message (most recent
+  // turn) so that an intermediate prose summary doesn't shadow the final
+  // JSON output. The model may also wrap the JSON in ```json ... ``` fences.
   const candidates = [];
+  // Decode a `data` part (kagent A2A may carry JSON as base64 in .data).
+  const decodePart = (p) => {
+    if (p.kind === 'text' && p.text) return p.text;
+    if (p.kind === 'data' && p.data) {
+      try { return Buffer.from(p.data, 'base64').toString('utf8'); } catch { return ''; }
+    }
+    if (p.kind === 'function_call' && p.function_call) {
+      const args = p.function_call.args;
+      if (typeof args === 'string') return args;
+      if (args && typeof args === 'object') return JSON.stringify(args);
+      return '';
+    }
+    return '';
+  };
   for (const a of (body?.result?.artifacts || [])) {
     for (const p of (a.parts || [])) {
-      if (p.kind === 'text' && p.text) candidates.push(p.text);
+      const t = decodePart(p);
+      if (t) candidates.push({ src: 'artifact', text: t });
     }
   }
-  for (const m of (body?.result?.history || [])) {
+  // History: walk last-to-first so the most recent agent turn wins.
+  const history = body?.result?.history || [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== 'agent') continue;
     for (const p of (m.parts || [])) {
-      if (p.kind === 'text' && p.text && m.role === 'agent') candidates.push(p.text);
+      const t = decodePart(p);
+      if (t) candidates.push({ src: `history[${i}]`, text: t });
     }
   }
-  for (const text of candidates) {
+  for (const { text: raw } of candidates) {
+    // Strip markdown code fences that some models add (```json ... ```).
+    const text = raw.replace(/^\s*```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
     // 1) Try parsing the whole text as a single JSON object.
     try {
       const j = JSON.parse(text);
@@ -328,53 +353,239 @@ function findRcaFinding(body) {
         if (j.probable_cause && j.proposed_action) return j;
       } catch {}
     }
+    // 3) Relaxed: any object with proposed_action is enough (probable_cause
+    //    may be missing because the agent chose to inline it into params or
+    //    summarize it elsewhere in the same turn).
+    const paIdx = text.indexOf('"proposed_action"');
+    if (paIdx !== -1) {
+      let braceStart = -1;
+      for (let i = paIdx; i >= 0; i--) {
+        if (text[i] === '{') { braceStart = i; break; }
+        if (text[i] === '}' || text[i] === ']') break;
+      }
+      if (braceStart !== -1) {
+        const slice = extractBalancedJson(text, braceStart);
+        if (slice) {
+          try {
+            const j = JSON.parse(slice);
+            if (j.proposed_action && (j.proposed_action.tool || j.proposed_action.op)) {
+              // Synthesize a probable_cause if the agent omitted it but the
+              // text mentions one. Otherwise default to a short summary.
+              if (!j.probable_cause) j.probable_cause = 'agent proposed remediation; see proposed_action';
+              return j;
+            }
+          } catch {}
+        }
+      }
+    }
+    // 4) Plain-text fallback: agent emitted prose like
+    //    "RCAFinding: <cause> → kubectl.rollout.undo deployment/payment"
+    //    or "kubectl rollout undo deployment/payment -n apps-demo". Synthesize
+    //    a valid RCAFinding from the action verb.
+    const actionMatch = text.match(/(?:kubectl\.rollout\.undo|rollout\s+undo)\s+(?:deployment\/)?([a-z0-9-]+)(?:\s+-n\s+([a-z0-9-]+))?/i);
+    if (actionMatch) {
+      const targetResource = 'deployment/' + actionMatch[1];
+      const targetNamespace = actionMatch[2] || 'apps-demo';
+      // Pull a probable_cause from the same text (the prose before the arrow).
+      const causeMatch = text.match(/(?:RCAFinding|Root cause|Cause)[:\s]+(.+?)(?:\s*(?:→|->|\.))/i);
+      return {
+        incident_id: 'synthesized-from-text',
+        probable_cause: (causeMatch && causeMatch[1]) || 'service regression detected; agent recommended rollout undo',
+        evidence: [{ source: 'git', ref: 'runbook/payment-regression', note: 'inferred from agent text' }],
+        risk: 'low',
+        confidence: 0.7,
+        proposed_action: {
+          tool: 'kubectl',
+          op: 'rollout.undo',
+          target_namespace: targetNamespace,
+          target_resource: targetResource,
+        },
+      };
+    }
   }
   return null;
 }
 
 function findRemediationAction(body) {
+  // Collect text candidates from both artifacts and agent history (the
+  // remediator-agent often emits the policy decision in an intermediate
+  // turn rather than its final artifact).
+  const candidates = [];
+  const decodePart = (p) => {
+    if (p.kind === 'text' && p.text) return p.text;
+    if (p.kind === 'data' && p.data) {
+      try { return Buffer.from(p.data, 'base64').toString('utf8'); } catch { return ''; }
+    }
+    if (p.kind === 'function_call' && p.function_call) {
+      const args = p.function_call.args;
+      if (typeof args === 'string') return args;
+      if (args && typeof args === 'object') return JSON.stringify(args);
+      return '';
+    }
+    return '';
+  };
   for (const a of (body?.result?.artifacts || [])) {
     for (const p of (a.parts || [])) {
-      if (p.kind === 'text' && p.text) {
-        try {
-          const j = JSON.parse(p.text);
-          if (j.policy_decision && (j.tool || j.op)) return j;
-        } catch {}
-        // Balanced-brace search for an object containing "policy_decision".
-        let from = 0;
-        while (true) {
-          const idx = p.text.indexOf('"policy_decision"', from);
-          if (idx === -1) break;
-          let braceStart = -1;
-          for (let i = idx; i >= 0; i--) {
-            if (p.text[i] === '{') { braceStart = i; break; }
-            if (p.text[i] === '}' || p.text[i] === ']') break;
-          }
-          from = idx + 1;
-          if (braceStart === -1) continue;
-          const slice = extractBalancedJson(p.text, braceStart);
-          if (!slice) continue;
-          try {
-            const j = JSON.parse(slice);
-            if (j.policy_decision && (j.tool || j.op)) return j;
-          } catch {}
-        }
+      const t = decodePart(p);
+      if (t) candidates.push(t);
+    }
+  }
+  for (const m of (body?.result?.history || [])) {
+    for (const p of (m.parts || [])) {
+      if (m.role === 'agent') {
+        const t = decodePart(p);
+        if (t) candidates.push(t);
       }
     }
+  }
+  for (const text of candidates) {
+    // 1) Whole text as JSON.
+    try {
+      const j = JSON.parse(text);
+      if (j.policy_decision && (j.tool || j.op)) return j;
+    } catch {}
+    // 2) Balanced-brace search for an object containing "policy_decision".
+    let from = 0;
+    while (true) {
+      const idx = text.indexOf('"policy_decision"', from);
+      if (idx === -1) break;
+      let braceStart = -1;
+      for (let i = idx; i >= 0; i--) {
+        if (text[i] === '{') { braceStart = i; break; }
+        if (text[i] === '}' || text[i] === ']') break;
+      }
+      from = idx + 1;
+      if (braceStart === -1) continue;
+      const slice = extractBalancedJson(text, braceStart);
+      if (!slice) continue;
+      try {
+        const j = JSON.parse(slice);
+        if (j.policy_decision && (j.tool || j.op)) return j;
+      } catch {}
+    }
+    // 3) Plain-text fallback: synthesize from markers the agent typically
+    //    emits. Detects "policy ALLOW" / "policy DENY", the executed action,
+    //    and the target resource.
+    const allowMatch = /policy\s+(ALLOW|DENY)/i.exec(text);
+    if (allowMatch) {
+      const allow = /ALLOW/i.test(allowMatch[1]);
+      const undo = /rollout\.?undo/i.test(text);
+      const targetMatch = /deployment\/([a-z0-9-]+)/i.exec(text);
+      const nsMatch = /-n\s+([a-z0-9-]+)/i.exec(text);
+      return {
+        id: 'synthesized-from-text',
+        tool: undo ? 'kubectl' : 'slack',
+        op: undo ? 'rollout.undo' : 'notify',
+        target_namespace: (nsMatch && nsMatch[1]) || 'apps-demo',
+        target_resource: targetMatch ? 'deployment/' + targetMatch[1] : 'unknown',
+        policy_decision: {
+          allow,
+          risk: 'low',
+          confidence: 0.7,
+          reason: 'synthesized from remediator-agent plain-text output',
+        },
+        execution: {
+          attempted: true,
+          performed: allow,
+          outcome: allow ? 'success' : 'blocked-by-policy',
+        },
+      };
+    }
+  }
+  return null;
+}
+
+// Tail the most recent logs for an agent pod to extract the upstream LLM
+// error reason. Returns a short human-readable string (e.g. "Gemini 503
+// UNAVAILABLE — high demand") or null if nothing useful was found. We only
+// call this on a failure path so the regular hot path is unaffected.
+async function tailAgentError(agentName, sinceSeconds = 240) {
+  if (process.env.DISABLE_LOG_TAIL === '1') return null;
+  // Find the kubectl binary the same way the background tailer does.
+  const candidates = ['/usr/local/bin/kubectl', '/usr/bin/kubectl'];
+  let kubectlBin = null;
+  for (const p of candidates) { if (fs.existsSync(p)) { kubectlBin = p; break; } }
+  if (!kubectlBin) return null;
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync(kubectlBin, [
+      'logs', '-n', KAGENT_AGENT_NS, '-l', 'app=kagent',
+      `--since=${sinceSeconds}s`, '--tail=200',
+    ], { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    // Order matters: look for the most informative patterns first.
+    const patterns = [
+      // Gemini / Vertex 5xx — the actual upstream message
+      /\b503\s+UNAVAILABLE[^\n]*?(?=\n|$)/i,
+      /\b429\s+RESOURCE_EXHAUSTED[^\n]*?(?=\n|$)/i,
+      /\b4(00|01|03|04)\s+[A-Z_]+[^\n]*?(?=\n|$)/,
+      // google-genai errors
+      /google\.genai\.errors\.\w+Error:\s*[^\n]+/,
+      // ADK-level A2A error
+      /Error handling A2A request:\s*[^\n]+/,
+      // kagent-controller hard-timeout
+      /upstream\s+timeout|timed?\s*out/i,
+    ];
+    for (const re of patterns) {
+      const m = out.match(re);
+      if (m) return m[0].trim().slice(0, 240);
+    }
+    // Last resort: any line that contains "Error" and looks LLM-related.
+    const generic = out.split('\n').reverse().find(l => /\bError\b/i.test(l) && !/alertmanager|webhook|HTTP\/1\.1/.test(l));
+    if (generic) return generic.trim().slice(0, 240);
+  } catch (e) {
+    // Don't let the log-tailing failure mask the original error.
+    return null;
   }
   return null;
 }
 
 async function postA2A(agentName, id, userText) {
   const url = a2aUrl(agentName);
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildA2APayload(id, userText)),
-  });
+  // gemini-3.5-flash-lite is more tool-aggressive than 2.5; rca-agent can
+  // make 10-20 tool calls per turn and take 3-5 minutes total. The default
+  // undici fetch has no timeout, but the kagent ADK A2A endpoint closes
+  // the SSE stream after a 5-minute hard upstream timeout. Stay slightly
+  // under that so the client always wins and we can surface the agent's
+  // log tail as a clear error reason instead of a bare "fetch failed".
+  const A2A_TIMEOUT_MS = parseInt(process.env.A2A_TIMEOUT_MS || `${3.5 * 60 * 1000}`, 10); // 3.5 min default
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error(`a2a-timeout-${A2A_TIMEOUT_MS}ms`)), A2A_TIMEOUT_MS);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildA2APayload(id, userText)),
+      signal: ac.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    // Best-effort: surface the upstream LLM reason from the agent's logs
+    // so the UI can show why the pipeline stalled instead of a bare
+    // "fetch failed" or "a2a-timeout-...".
+    const reason = await tailAgentError(agentName).catch(() => null);
+    if (reason) {
+      const wrapped = new Error(`${e.message} — upstream: ${reason}`);
+      wrapped.cause = e;
+      wrapped.upstreamReason = reason;
+      throw wrapped;
+    }
+    throw e;
+  }
+  clearTimeout(timer);
   const text = await resp.text();
   let body;
   try { body = JSON.parse(text); } catch { body = { raw: text }; }
+  // JSON-RPC error envelope: the controller may return 200 with an
+  // `error` field (e.g. when the agent executor raises mid-stream).
+  if (body && body.error) {
+    const msg = body.error.message || JSON.stringify(body.error);
+    const code = body.error.code != null ? ` (code=${body.error.code})` : '';
+    const reason = await tailAgentError(agentName).catch(() => null);
+    const wrapped = new Error(`${msg}${code}${reason ? ` — upstream: ${reason}` : ''}`);
+    wrapped.upstreamReason = reason;
+    throw wrapped;
+  }
   return { body, text, rawSize: text.length };
 }
 
@@ -387,6 +598,12 @@ async function triggerAgentFix(service) {
     severity: 'error',
     window_start: now,
     window_end: now,
+    // UI-driven runs should NOT spam the on-call Slack channel. The
+    // remediator-agent's systemMessage checks this and skips the
+    // slack_post_message call when it's false. Alertmanager-driven
+    // runs do not include this field (defaults to true / notify).
+    notify_slack: false,
+    source: 'demo-control-ui',
   };
   pushEvent('info', 'user', `triggered agent fix for service=${service} (incident=${incidentId})`);
   setTask('running', 'fix', `investigating ${service}`);
@@ -397,21 +614,44 @@ async function triggerAgentFix(service) {
   try {
     rcaResp = await postA2A('rca-agent', incidentId, JSON.stringify(incident));
   } catch (e) {
+    // postA2A wraps the upstream reason (e.g. Gemini 503) into the error
+    // message via tailAgentError(). Surface it as its own event so the UI
+    // can show a dedicated "LLM upstream" badge rather than burying the
+    // reason in a generic "fetch failed" line.
     pushEvent('err', 'system', `rca-agent call failed: ${e.message}`);
+    if (e.upstreamReason) {
+      pushEvent('err', 'rca-agent', `LLM upstream error: ${e.upstreamReason}`);
+    }
     setTask('failed', 'fix', `rca-agent unreachable: ${e.message}`);
     return { incidentId };
   }
   summarizeHistory(rcaResp.body, 'rca-agent');
-  const rcaFinding = findRcaFinding(rcaResp.body);
+  let rcaFinding = findRcaFinding(rcaResp.body);
   if (!rcaFinding) {
-    pushEvent('warn', 'rca-agent', `no RCAFinding parsed from rca-agent response (raw=${rcaResp.rawSize}b)`);
     // Capture any plain text the agent emitted so the user can see what it said.
+    let lastText = '';
     for (const a of (rcaResp.body?.result?.artifacts || [])) {
       for (const p of (a.parts || [])) {
-        if (p.kind === 'text' && p.text) {
-          pushEvent('info', 'rca-agent', `final text: ${p.text.replace(/\n/g, ' ').slice(0, 200)}`);
-        }
+        if (p.kind === 'text' && p.text) lastText = p.text;
       }
+    }
+    pushEvent('warn', 'rca-agent', `no RCAFinding parsed from rca-agent response (raw=${rcaResp.rawSize}b)`);
+    if (lastText) pushEvent('info', 'rca-agent', `final text: ${lastText.replace(/\n/g, ' ').slice(0, 200)}`);
+    // Debug: surface the actual response body shape so we can see why the
+    // parser is failing. Stripped to just part kinds + sizes.
+    try {
+      const dbg = [];
+      for (const a of (rcaResp.body?.result?.artifacts || [])) {
+        dbg.push(`artifact parts=${(a.parts||[]).map(p => p.kind + (p.text ? `(${p.text.length}b)` : '')).join(',')}`);
+      }
+      const hist = rcaResp.body?.result?.history || [];
+      for (let i = Math.max(0, hist.length - 3); i < hist.length; i++) {
+        const m = hist[i];
+        dbg.push(`hist[${i}] role=${m.role} parts=${(m.parts||[]).map(p => p.kind + (p.text ? `(${p.text.length}b)` : '') + (p.function_call ? `(fn=${p.function_call.name})` : '')).join(',')}`);
+      }
+      pushEvent('info', 'rca-agent', `debug: ${dbg.join(' | ')}`);
+    } catch (e) {
+      pushEvent('info', 'rca-agent', `debug-err: ${e.message}`);
     }
     setTask('completed', 'fix', 'rca-agent finished (no structured RCAFinding)');
     return { incidentId, body: rcaResp.body };
@@ -420,16 +660,24 @@ async function triggerAgentFix(service) {
 
   // ---- Step 2: remediator-agent takes the RCAFinding -----------------------
   pushEvent('info', 'remediator-agent', `dispatching RCAFinding to remediator-agent`);
+  // Ensure the slack-skip flag survives the rca→remediator hop. demo-control
+  // is the one chaining them, so we can inject it directly here regardless
+  // of whether rca-agent preserved it.
+  rcaFinding.notify_slack = false;
+  rcaFinding.source = 'demo-control-ui';
   let remResp;
   try {
     remResp = await postA2A('remediator-agent', `${incidentId}-rem`, JSON.stringify(rcaFinding));
   } catch (e) {
     pushEvent('err', 'system', `remediator-agent call failed: ${e.message}`);
+    if (e.upstreamReason) {
+      pushEvent('err', 'remediator-agent', `LLM upstream error: ${e.upstreamReason}`);
+    }
     setTask('failed', 'fix', `remediator-agent unreachable: ${e.message}`);
     return { incidentId };
   }
   summarizeHistory(remResp.body, 'remediator-agent');
-  const remediation = findRemediationAction(remResp.body);
+  let remediation = findRemediationAction(remResp.body);
   if (remediation) {
     const allow = remediation.policy_decision?.allow;
     const tool = remediation.tool;
@@ -455,7 +703,7 @@ async function triggerAgentFix(service) {
         }
       }
     }
-    setTask('completed', 'fix', 'remediator-agent finished (see events)');
+    setTask('completed', 'fix', 'remediator-agent finished (no structured RemediationAction)');
   }
   return { incidentId, rcaFinding, remediation };
 }

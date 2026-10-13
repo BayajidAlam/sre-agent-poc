@@ -1,33 +1,116 @@
-# Multi-Agent SRE POC: kagent on Kubernetes
+# Athena — SRE Agent
 
-3-agent incident-response pipeline (`trace-agent -> rca-agent -> remediator-agent`)
-on [kagent](https://github.com/kagent-dev/kagent), gated by OPA, with read-only
-observability on Prometheus + Loki + Tempo. UI-driven by a single click in
-`apps/demo-control`.
+Multi-agent incident-response pipeline on
+[kagent](https://github.com/kagent-dev/kagent) — three agents
+(`trace-agent` → `rca-agent` → `remediator-agent`) detect, diagnose, and
+fix production incidents on a 3-service demo app. Every write to the
+cluster is gated by OPA policy. Driven by a single click in the
+`apps/demo-control` UI, with read-only observability on Prometheus +
+Loki + Tempo.
 
 ## Architecture
 
-<img width="5304" height="2796" alt="sre-agent-multi-agent-incident-response-on-kagent" src="https://github.com/user-attachments/assets/aaf088ee-98a4-4ce9-97f3-7b530c121b93" />
+<img alt="sre-agent multi-agent incident response on kagent" src="https://github.com/user-attachments/assets/aaf088ee-98a4-4ce9-97f3-7b530c121b93" />
 
 ## Worked example, one click, full recovery
 
-<img width="1920" height="1006" alt="dashboard" src="https://github.com/user-attachments/assets/318deef1-a968-474d-92f5-2ae311d51902" />
+<img alt="dashboard" src="https://github.com/user-attachments/assets/318deef1-a968-474d-92f5-2ae311d51902" />
 
+### Live agent activity (inject -> rca-agent -> remediator-agent -> policy ALLOW -> rollout undo)
+
+<img width="1234" alt="agent activity part 1" src="docs/images/logs 1.png" />
+
+<br/>
+
+<img width="1258" alt="agent activity part 2" src="docs/images/logs2.png" />
+
+The first screenshot shows rca-agent dispatching, making the two budgeted tool
+calls (`k8s_get_resources deployment/payment` + `k8s_get_resources pod`), and
+emitting a clean RCAFinding. The second screenshot picks up where
+remediator-agent takes over: it calls `policy_evaluate`, then `k8s_rollout
+action=undo`, and the policy decision returns ALLOW. Total wall-clock: ~12s
+from injection to `kubectl rollout undo` complete.
 
 ---
 
 ## How to run
 
+### 1. Prerequisites
+
+| Tool | Version | Notes |
+|---|---|---|
+| `docker` | 24+ | with the kind Docker driver |
+| `kind` | 0.23+ | `brew install kind` / `choco install kind` |
+| `kubectl` | 1.31+ | matches the kind k8s version |
+| `helm` | 3.14+ | for the observability + kagent charts |
+| `make` | any | the entry point for the whole POC |
+| 8 GB free RAM | — | the cluster + obs stack + 3 LLM agents |
+
+### 2. Clone and configure
+
 ```bash
-export GOOGLE_API_KEY=AIza...        # free at https://aistudio.google.com/apikey
-export SLACK_WEBHOOK_URL=https://hooks.slack.com/...    # optional
-make poc-up                          # cluster + obs stack + demo + agents + OPA
-./scripts/port-forwards.sh           # host-side forwards (background)
-# Open the demo-control URL printed by port-forwards.sh
-# Click "Inject + Auto-fix: payment v2"
+git clone https://github.com/<your-org>/sre-agent.git
+cd sre-agent
+cp .env.example .env
 ```
 
-If a step in `poc-up` fails partway, finish manually with `bash scripts/deploy-missing.sh`.
+Open `.env` and set the one required value:
+
+```bash
+# .env (the only field you must change to run the POC)
+GEMINI_API_KEY=AIza...   # free at https://aistudio.google.com/apikey
+```
+
+`SLACK_WEBHOOK` is optional — leave it empty if you don't want on-call
+notifications; the pipeline still runs end-to-end without it. The other
+fields in `.env.example` (OpenAI / Anthropic / Ollama) are only needed if
+you swap `manifests/agents/*.yaml` to point at a different
+`modelConfig:`.
+
+### 3. Bring the cluster up
+
+```bash
+make poc-up
+```
+
+`poc-up` is a single Makefile target that creates the `sre-poc` kind
+cluster, installs the observability stack + demo services + OPA, deploys
+all 8 MCP shims + 3 kagent agents, and loads the `<name>:dev` images.
+
+If a step fails partway, finish manually with `bash scripts/deploy-missing.sh`.
+
+### 4. Open the UIs
+
+```bash
+./scripts/port-forwards.sh
+```
+
+This prints every URL with the correct host binding for your OS
+(Windows host IP, or `127.0.0.1` on Linux/macOS). The key one:
+
+| URL | What's there |
+|---|---|
+| http://localhost:15000 | **Demo Control** — click "Inject + Auto-fix: payment v2" to drive the full loop |
+| http://localhost:18080 | kagent chat UI |
+| http://localhost:13000 | Grafana |
+| http://localhost:19091 | Prometheus |
+| http://localhost:19092 | Alertmanager |
+
+On Windows, the k8s dashboard needs a token:
+
+```bash
+kubectl --context kind-sre-poc -n kubernetes-dashboard create token admin-user --duration=24h
+# paste the token at http://localhost:18443
+```
+
+### 5. Drive the demo
+
+Open http://localhost:15000 and click **"Inject + Auto-fix: payment v2"**.
+The services table will flip `payment` to `degraded / v2 / slow / 50%`,
+then the agents will run, then the policy ALLOW will trigger
+`kubectl rollout undo` and flip `payment` back to `healthy / v1 / fast / 0%`
+in about 30 seconds end-to-end. The activity log on the right shows every
+tool call, the RCAFinding, the policy decision, and the rollout.
 
 ---
 
@@ -167,15 +250,6 @@ to bypass `wslrelay`, or `127.0.0.1` on Linux/macOS).
    `agent-write` SA is scoped to specific verbs in `apps-demo`.
 4. **Default-deny**: if OPA errors or times out, the wrapper returns
    `allow:false` (verified by smoke test).
-
----
-
-## Conventions
-
-- Cluster: `sre-poc` (kind). Always `--context kind-sre-poc`.
-- LLM: Gemini 2 Flash Lite. Switch to OpenAI by editing
-  `manifests/modelconfig/`.
-- Image naming: `<name>:dev`, loaded with `kind load docker-image`.
 
 ---
 
