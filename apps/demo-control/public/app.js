@@ -67,9 +67,15 @@ function renderServices() {
 
 function renderEvents() {
   const list = $('events');
+  // Capture scroll state BEFORE re-render: if the user is already pinned
+  // to the bottom (or close to it), keep them pinned to the bottom so new
+  // events stay visible. Otherwise preserve their scroll position so they
+  // can read history without being yanked down.
+  const wasPinned = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+
   const seen = new Set();
-  // Render newest events on top (reverse chronological order).
-  list.innerHTML = state.events.slice().reverse().map(e => {
+  // Chronological order: oldest at top, newest at bottom (chat-style).
+  list.innerHTML = state.events.map(e => {
     const key = e.t + e.agent + e.message;
     if (seen.has(key)) return '';
     seen.add(key);
@@ -81,8 +87,10 @@ function renderEvents() {
       <span class="msg">${escapeHtml(e.message)}</span>
     </li>`;
   }).join('');
-  // No auto-scroll — newest is already at the top.
-  list.scrollTop = 0;
+
+  if (wasPinned) {
+    list.scrollTop = list.scrollHeight;
+  }
 }
 
 function escapeHtml(s) {
