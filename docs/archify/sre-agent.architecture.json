@@ -2,7 +2,7 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "sre-agent — Multi-Agent Incident Response on kagent (UI-driven)",
+    "title": "sre-agent — Multi-Agent Incident Response on kagent",
     "output": "sre-agent.architecture.html",
     "visual_preset": "signal-flow",
     "animation": "trace",
@@ -15,7 +15,6 @@
     { "id": "tempo",    "type": "database",   "label": "Tempo",            "sublabel": "trace store",          "pos": [40,  420], "size": [170, 70], "tag": "observability ns" },
     { "id": "dash",     "type": "cloud",      "label": "Grafana",          "sublabel": "Explore :13000",       "pos": [40,  560], "size": [170, 70], "tag": "observability ns" },
 
-    { "id": "dc",       "type": "cloud",      "label": "demo-control",     "sublabel": "visual UI :15000",     "pos": [280, 100], "size": [180, 90], "tag": "ns: apps-demo" },
     { "id": "ctrl",     "type": "backend",    "label": "kagent Ctrl",      "sublabel": "A2A + Agent CRs",      "pos": [280, 290], "size": [180, 90], "tag": "kagent 0.7.2" },
     { "id": "tools",    "type": "messagebus", "label": "kagent-tools",     "sublabel": "kubectl/get/apply/exec","pos": [280, 460], "size": [180, 70], "tag": "kagent ns (built-in)" },
 
@@ -41,29 +40,26 @@
     { "id": "k8sd",     "type": "cloud",      "label": "K8s Dashboard",    "sublabel": "admin UI :19443",      "pos": [1430, 560], "size": [170, 70], "tag": "admin-user" }
   ],
   "boundaries": [
-    { "kind": "region",         "label": "kind cluster (sre-poc)",         "wraps": ["dc", "ctrl", "tools", "trace", "rca", "rem", "pmcp", "pnode", "opa", "promSh", "lokiSh", "tempoSh", "argocdSh", "gitSh", "slackSh", "alertSh", "demo", "pay", "inv"], "pad": 18 },
+    { "kind": "region",         "label": "kind cluster (sre-poc)",         "wraps": ["ctrl", "tools", "trace", "rca", "rem", "pmcp", "pnode", "opa", "promSh", "lokiSh", "tempoSh", "argocdSh", "gitSh", "slackSh", "alertSh", "demo", "pay", "inv"], "pad": 18 },
     { "kind": "security-group", "label": "observability ns",               "wraps": ["prom", "alert", "loki", "tempo", "dash"], "pad": 14 },
     { "kind": "security-group", "label": "kagent ns",                      "wraps": ["ctrl", "tools"], "pad": 14 },
     { "kind": "security-group", "label": "agent-read ns (agents + shims)", "wraps": ["trace", "rca", "rem", "pmcp", "promSh", "lokiSh", "tempoSh", "argocdSh", "gitSh", "slackSh", "alertSh"], "pad": 14 },
     { "kind": "security-group", "label": "agent-write ns (policy backend)","wraps": ["pnode", "opa"], "pad": 14 },
-    { "kind": "security-group", "label": "apps-demo ns",                   "wraps": ["dc", "demo", "pay", "inv"], "pad": 14 }
+    { "kind": "security-group", "label": "apps-demo ns",                   "wraps": ["demo", "pay", "inv"], "pad": 14 }
   ],
   "connections": [
     { "from": "prom",     "to": "alert",    "label": "firing rules" },
-    { "from": "alert",    "to": "ctrl",     "label": "POST webhook (alt trigger)", "variant": "dashed" },
+    { "from": "alert",    "to": "ctrl",     "label": "POST webhook (IncidentContext)", "variant": "emphasis" },
 
-    { "from": "dc",       "to": "demo",     "label": "PATCH env (inject)", "variant": "emphasis" },
-    { "from": "dc",       "to": "ctrl",     "label": "A2A incident-context", "variant": "emphasis" },
     { "from": "ctrl",     "to": "trace",    "label": "A2A dispatch", "variant": "emphasis" },
     { "from": "trace",    "to": "rca",      "label": "agent_read (peer call)", "variant": "emphasis" },
-    { "from": "rca",      "to": "dc",       "label": "RCAFinding (back to caller)", "variant": "dashed" },
-    { "from": "dc",       "to": "rem",      "label": "A2A rca-finding (caller-driven)", "variant": "emphasis" },
+    { "from": "rca",      "to": "rem",      "label": "RCAFinding (caller-driven)", "variant": "emphasis" },
 
     { "from": "trace",    "to": "tempoSh",  "label": "tempo_search", "variant": "dashed" },
     { "from": "trace",    "to": "lokiSh",   "label": "loki_query",   "variant": "dashed" },
     { "from": "trace",    "to": "promSh",   "label": "prom_query",   "variant": "dashed" },
-    { "from": "rca",      "to": "gitSh",    "label": "git tools",   "variant": "dashed" },
-    { "from": "rca",      "to": "argocdSh", "label": "argocd_list", "variant": "dashed" },
+    { "from": "rca",      "to": "gitSh",    "label": "git tools",    "variant": "dashed" },
+    { "from": "rca",      "to": "argocdSh", "label": "argocd_list",  "variant": "dashed" },
 
     { "from": "rem",      "to": "pmcp",     "label": "policy_evaluate", "variant": "security" },
     { "from": "pmcp",     "to": "pnode",    "label": "HTTP POST",    "variant": "security" },
@@ -86,9 +82,9 @@
     { "from": "tempo",    "to": "dash",     "label": "datasource" }
   ],
   "cards": [
-    { "dot": "cyan",    "title": "Trigger Path (UI is the driver)",   "items": ["User clicks 'Inject + Auto-fix' in the demo-control UI (:15000)", "demo-control PATCHes the Deployment env, then POSTs IncidentContext to kagent-controller", "Alertmanager webhook is wired (manifests/webhook/) as an alt trigger, but no PrometheusRule matches the inject today"] },
-    { "dot": "emerald", "title": "3-Agent A2A Pipeline",              "items": ["trace-agent (RO) pulls the incident context via MCP — delegated as a tool call from rca-agent", "rca-agent reasons over git + runbook + k8s state and emits a typed RCAFinding", "Caller (demo-control) chains the RCAFinding into remediator-agent — kagent 0.7 rejects agent-to-agent cycles"] },
-    { "dot": "rose",    "title": "Defense in Depth",                  "items": ["OPA Rego allow-list + confidence >= 0.7 + risk != high", "policy-mcp-shim -> policy-mcp -> OPA chain returns default-deny on any error", "agent-read SA is view-only; agent-write SA scoped to specific verbs in apps-demo"] },
-    { "dot": "amber",   "title": "Recovery Loop",                     "items": ["remediator-agent calls kagent-tools k8s_rollout(action=undo) on allow=true", "Kubernetes rolls the payment Deployment back from v2 to v1 (~30s)", "demo-control polls the API at 2 Hz, services table flips back to green automatically"] }
+    { "dot": "cyan",    "title": "Trigger Path (Alertmanager)",      "items": ["Prometheus fires an alert when /api/payment error rate crosses threshold", "Alertmanager receives the alert and POSTs the IncidentContext webhook to kagent-controller", "kagent-controller routes the A2A message to the trace-agent in agent-read ns"] },
+    { "dot": "emerald", "title": "3-Agent A2A Pipeline",             "items": ["trace-agent (RO) queries Prometheus + Loki + Tempo via MCP shims to gather evidence", "rca-agent reasons over the runbook (git-mcp), k8s state, and emits a typed RCAFinding", "kagent 0.7 rejects A2A peer refs that form cycles; the caller (kagent-controller) chains trace -> rca -> remediator"] },
+    { "dot": "rose",    "title": "Defense in Depth",                 "items": ["OPA Rego allow-list + confidence >= 0.7 + risk != high", "policy-mcp-shim -> policy-mcp -> OPA chain returns default-deny on any error", "agent-read SA is view-only; agent-write SA scoped to specific verbs in apps-demo"] },
+    { "dot": "amber",   "title": "Recovery Loop",                    "items": ["remediator-agent calls kagent-tools k8s_rollout(action=undo) on allow=true", "Kubernetes rolls the payment Deployment back from v2 to v1 (~30s)", "remediator-agent posts a Slack notification and creates an Alertmanager silence"] }
   ]
 }
