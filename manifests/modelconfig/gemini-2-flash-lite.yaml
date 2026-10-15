@@ -16,8 +16,9 @@
 #   - 1500 RPD (~500 full chain runs/day; each chain = 3 requests)
 #
 # Model history:
-#   - 2026-10: gemini-2.0-flash-lite returned 404 NOT_FOUND; switched to
-#     gemini-2.5-flash-lite (stable, free-tier eligible).
+#   - 2026-10: gemini-2.0-flash returned 404 NOT_FOUND (retired by Google);
+#     reverted to gemini-2.5-flash-lite which was the model that worked
+#     before the free-tier quota exhaustion.
 apiVersion: kagent.dev/v1alpha2
 kind: ModelConfig
 metadata:

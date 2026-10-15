@@ -32,6 +32,15 @@ async def slack_post_message(channel: str, text: str) -> str:
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
     log.info("slack_post_message channel=%s webhook_set=%s", channel, bool(webhook_url))
 
+    # Sentinel: demo-control sets channel to "_skip_" (or any value starting
+    # with `_skip_`) on UI-driven runs so we never spam the on-call channel.
+    # This is a belt-and-suspenders check — the agent's systemMessage should
+    # already skip the call when notify_slack=false, but if the model forgets
+    # we still don't want the notification to fire.
+    if (channel or "").strip().lower().startswith("_skip_"):
+        log.info("slack_post_message skipped: channel=%s (sentinel)", channel)
+        return '{"ok": true, "skipped": true, "reason": "channel-sentinel"}'
+
     # 1) Best-effort write to the in-cluster recorder (audit/replay). The
     #    recorder is optional — if it doesn't exist (DNS failure) we log
     #    a warning and continue, so the real-Slack webhook still fires.

@@ -26,10 +26,24 @@ echo "    localhost:19091 -> kube-prom-kube-prometheus-prometheus:9090 (Promethe
 echo "    localhost:19092 -> kube-prom-kube-prometheus-alertmanager:9093 (Alertmanager UI)"
 echo "    Press Ctrl-C to stop all."
 
-trap "echo '>>> stopping'; kill 0" SIGINT SIGTERM EXIT
+# The k8s dashboard only serves HTTPS on 8443, and Chrome (and some other
+# browsers) aggressively retries the TLS handshake when the cert is self-
+# signed and you clicked through in unsafe mode. Each retry can kill
+# kubectl's spdy port-forward tunnel, so we run the dashboard forward via
+# a self-healing wrapper instead of a bare `kubectl port-forward`.
+#
+# See scripts/dashboard-port-forward.ps1 for the wrapper.
+SELF_HEAL_DASH_PID=
+if command -v powershell >/dev/null 2>&1; then
+  echo "    localhost:18443 -> kubernetes-dashboard:443 (self-healing via PowerShell wrapper)"
+  powershell -NoProfile -File "$(dirname "$0")/dashboard-port-forward.ps1" &
+  SELF_HEAL_DASH_PID=$!
+fi
+
+trap "echo '>>> stopping'; kill 0; [ -n \"$SELF_HEAL_DASH_PID\" ] && kill $SELF_HEAL_DASH_PID 2>/dev/null" SIGINT SIGTERM EXIT
 $KUBECTL port-forward -n apps-demo svc/demo-control 15000:80 &
 $KUBECTL port-forward -n kagent svc/ui-kagent 18080:8080 &
-$KUBECTL port-forward -n kubernetes-dashboard svc/kubernetes-dashboard 18443:443 &
+# Dashboard port-forward is handled by the PowerShell wrapper above.
 $KUBECTL port-forward -n observability svc/kube-prom-kube-prometheus-prometheus 19091:9090 &
 $KUBECTL port-forward -n observability svc/kube-prom-kube-prometheus-alertmanager 19092:9093 &
 wait

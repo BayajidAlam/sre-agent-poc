@@ -47,11 +47,19 @@ spec:
          For kubectl delete, prefer k8s_delete_resource with a scoped name;
          never delete a NetworkPolicy, Node, or CRD.
       5. After applying (or halting), emit a Slack notification via the
-         slack-mcp tool if available; otherwise, write a structured log
-         message.
+         slack-mcp tool if available AND the RCAFinding does NOT set
+         `notify_slack: false`; otherwise, write a structured log message.
+         Demo-control sets `notify_slack: false` on UI-driven runs so the
+         demo UI does not spam the on-call channel. Alertmanager-driven
+         runs leave it unset (default true).
       6. Output the final RemediationAction JSON, including the
          policy_decision block, conforming to schemas/remediation-action.json.
          Return ONLY that JSON.
+         IMPORTANT: after evaluating policy and (if allowed) applying the
+         action via kagent-tools, you MUST stop calling tools and emit the
+         final RemediationAction JSON as a plain-text message. Do NOT
+         continue making tool calls once the action is complete — the final
+         text reply is what the caller parses to confirm success.
     a2aConfig:
       skills:
         - id: remediate

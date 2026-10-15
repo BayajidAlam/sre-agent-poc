@@ -103,6 +103,15 @@ Then open:
 - **kubectl on Windows:** committed at `bin/kubectl.exe`. `Makefile`
   defaults to running it through Docker (`bitnami/kubectl:1.31`); the
   host binary works too if `kubectl` is on PATH.
+- **k8s dashboard port-forward** (`localhost:18443`): the dashboard only
+  serves HTTPS on 8443, and Chrome (when you click through the self-signed
+  cert in "unsafe mode") retries the TLS handshake aggressively. Each
+  retry can kill kubectl's spdy port-forward tunnel, leaving the port
+  stuck in a `lost connection to pod` state. `scripts/port-forwards.sh`
+  runs the dashboard forward through `scripts/dashboard-port-forward.ps1`,
+  a PowerShell wrapper that auto-restarts on a 2s backoff. If you ever see
+  `localhost:18443` refusing connections, the wrapper will recover it
+  within a couple of seconds.
 - **kagent:** version 0.7.2. A2A peer refs that form cycles
   (`rca-agent ↔ remediator-agent`) are rejected — the **caller** must
   chain them via two sequential A2A POSTs.

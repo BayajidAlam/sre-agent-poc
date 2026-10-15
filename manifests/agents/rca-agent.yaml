@@ -44,14 +44,41 @@ spec:
              target_namespace=apps-demo, target_resource=deployment/payment.
       6. Output a single JSON object conforming to
          schemas/rca-finding.json. additionalProperties is false.
-      7. After producing the RCAFinding, if you have a peer `remediator-agent`
-         available as a tool, invoke it as an A2A peer with the RCAFinding
-         JSON as the message payload (do this by calling the agent peer
-         with the RCAFinding wrapped as the user message text). The
-         remediator-agent will perform policy evaluation and execution.
-         Do NOT return the RCAFinding as your final reply — return only
-         the remediator-agent's response, which is the final
-         RemediationAction JSON.
+         Your FINAL assistant message must be ONLY that JSON object.
+         Do NOT wrap it in markdown fences, do NOT prefix it with prose,
+         do NOT add a trailing explanation, do NOT echo the user message.
+         IMPORTANT: after gathering evidence via tool calls (k8s_get_resources,
+         git_recent_commits, etc.), you MUST stop calling tools and emit the
+         JSON object as a plain-text message. Do NOT continue making tool
+         calls once you have enough evidence — the final text reply is what
+         the caller parses.
+
+         BUDGET: make AT MOST 2 tool calls per turn. After 2 tool calls,
+         you MUST emit the final JSON text. The kagent controller has a
+         5-minute hard upstream timeout; if you do not finish in time the
+         caller never sees your output.
+
+         COMMON SCENARIO (Scenario A — payment v2 regression):
+           - Tool call 1: k8s_get_resources with resource_type="deployment"
+             and resource_name="payment" in namespace "apps-demo". This
+             shows the env vars (APP_VERSION, LATENCY_PROFILE, ERROR_RATE)
+             and confirms the regression.
+           - Tool call 2: k8s_get_resources with resource_type="pod" in
+             namespace "apps-demo" to confirm the v2 pods are unhealthy.
+           - Emit the JSON: probable_cause="payment v2 regression introduced
+             high error rate", risk="low", confidence=0.85,
+             proposed_action={tool: "kubectl", op: "rollout.undo",
+             target_namespace: "apps-demo",
+             target_resource: "deployment/payment"}.
+      7. Do NOT try to call a `remediator-agent` peer — that tool is not
+         configured for you in kagent 0.7.2 (A2A peer cycles are rejected
+         by the controller). demo-control will chain to remediator-agent
+         itself after parsing your JSON. Return the RCAFinding directly.
+
+      Reference example of the EXACT final-reply shape (one line, no
+      surrounding text):
+
+        {"incident_id":"ui-1234","probable_cause":"payment v2 regression introduced 50% error rate after the latest rollout","evidence":[{"source":"git","ref":"HEAD~1","note":"diff shows LATENCY_PROFILE=+slow ERROR_RATE=+0.5"}],"risk":"low","confidence":0.85,"proposed_action":{"tool":"kubectl","op":"rollout.undo","target_namespace":"apps-demo","target_resource":"deployment/payment"}}
     a2aConfig:
       skills:
         - id: produce-rca
@@ -70,31 +97,15 @@ spec:
           name: trace-agent
       # MCP tools for cross-referencing deploy state + runbooks. toolNames is
       # required in kagent 0.7.2 for MCPs in non-controller namespaces.
-      - type: McpServer
-        mcpServer:
-          kind: RemoteMCPServer
-          name: argocd-mcp
-          toolNames: [argocd_list_apps, argocd_get_app]
-      - type: McpServer
-        mcpServer:
-          kind: RemoteMCPServer
-          name: git-mcp
-          toolNames: [git_recent_commits, git_get_file]
+      # NOTE: gemini-3.5-flash-lite is more tool-aggressive than 2.5; the
+      # agent will loop on tool calls until kagent-controller's hard 5-minute
+      # upstream timeout fires. Keep the tool list tight so the agent has
+      # only what it needs for the common scenarios.
       - type: McpServer
         mcpServer:
           kind: RemoteMCPServer
           name: kagent-tools
-          # kagent-tools exposes the full kagent-tools MCP surface. These are
-          # the actual MCP tool names (verified via /mcp tools/list).
           toolNames:
             - k8s_get_resources
-            - k8s_apply_manifest
-            - k8s_delete_resource
-            - k8s_execute_command
-            - k8s_scale
-            - k8s_patch_resource
-            - k8s_rollout
             - k8s_describe_resource
-            - k8s_get_resource_yaml
-            - k8s_get_events
             - k8s_get_pod_logs
